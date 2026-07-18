@@ -1,0 +1,105 @@
+:root {
+	color-scheme: light;
+	font-family: "Segoe UI", system-ui, sans-serif;
+	background: #f7f3ef;
+	color: #1f1a17;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+}
+
+.ecosystem {
+	max-width: 960px;
+	margin: 0 auto;
+	padding: 24px;
+}
+
+.ecosystem__header h1 {
+	margin: 0 0 8px;
+	font-size: 2rem;
+	letter-spacing: -0.03em;
+}
+
+.ecosystem__header p {
+	margin: 0 0 20px;
+	color: #5a4f47;
+}
+
+.ecosystem__filters {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	gap: 12px;
+	margin-bottom: 20px;
+}
+
+.ecosystem__filters input {
+	padding: 10px 12px;
+	border: 1px solid #d8cec4;
+	border-radius: 8px;
+	background: #fff;
+}
+
+.ecosystem__list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: grid;
+	gap: 16px;
+}
+
+.ecosystem__card {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 16px;
+	border: 1px solid #e2d8cf;
+	border-radius: 12px;
+	background: #fff;
+}
+
+.ecosystem__card h2 {
+	margin: 0 0 8px;
+	font-size: 1.1rem;
+}
+
+.ecosystem__card p {
+	margin: 0 0 8px;
+}
+
+.ecosystem__meta {
+	color: #6a5d54;
+	font-size: 0.9rem;
+}
+
+.ecosystem__actions {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.ecosystem__actions button {
+	padding: 8px 12px;
+	border: 0;
+	border-radius: 8px;
+	background: #d45f43;
+	color: #fff;
+	cursor: pointer;
+}
+
+.ecosystem__actions button:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+[data-ecosystem-error="true"] {
+	color: #9f1d1d;
+}
+
+[data-ecosystem-empty="true"] {
+	color: #6a5d54;
+}
