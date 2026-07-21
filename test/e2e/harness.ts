@@ -13,6 +13,7 @@ import {
 	registerE2ePid,
 	waitForProcessExit,
 } from './cleanup';
+import { E2E_HARNESS_TIMEOUT_MS, E2E_POLL_MS } from './constants';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const hooksPath = path.join(repoRoot, 'dist/backend/hooks.cjs');
@@ -31,10 +32,14 @@ export type N8nInstance = {
 	logStream: fs.WriteStream;
 };
 
+export type InstanceSeed = {
+	name: string;
+	workflows: N8nWorkflow[];
+};
+
 export type Harness = {
 	mqttUrl: string;
-	instanceA: N8nInstance;
-	instanceB: N8nInstance;
+	instances: N8nInstance[];
 	stop: () => Promise<void>;
 };
 
@@ -105,7 +110,7 @@ async function startMqttBroker(): Promise<{ url: string; close: () => Promise<vo
 	};
 }
 
-async function waitForHealth(baseUrl: string, timeoutMs = 180_000): Promise<void> {
+async function waitForHealth(baseUrl: string, timeoutMs = E2E_HARNESS_TIMEOUT_MS): Promise<void> {
 	const started = Date.now();
 	const endpoints = [
 		`${baseUrl}/rest/ecosystem/config`,
@@ -121,7 +126,7 @@ async function waitForHealth(baseUrl: string, timeoutMs = 180_000): Promise<void
 				// retry
 			}
 		}
-		await new Promise((resolve) => setTimeout(resolve, 2000));
+		await new Promise((resolve) => setTimeout(resolve, E2E_POLL_MS));
 	}
 	throw new Error(`Timed out waiting for n8n at ${baseUrl}`);
 }
@@ -132,6 +137,25 @@ function extractCookie(response: Response): string {
 	return header.split(';')[0] ?? header;
 }
 
+async function loginOwner(baseUrl: string, payload: {
+	email: string;
+	password: string;
+}): Promise<string> {
+	const response = await fetch(`${baseUrl}/rest/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			emailOrLdapLoginId: payload.email,
+			password: payload.password,
+		}),
+	});
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(`Login failed: ${response.status} ${text}`);
+	}
+	return extractCookie(response);
+}
+
 async function setupOwner(baseUrl: string, label: string): Promise<string> {
 	const payload = {
 		email: `${label}@example.com`,
@@ -140,25 +164,30 @@ async function setupOwner(baseUrl: string, label: string): Promise<string> {
 		password: 'TestPassword123!',
 	};
 	const started = Date.now();
-	while (Date.now() - started < 120_000) {
+	while (Date.now() - started < E2E_HARNESS_TIMEOUT_MS) {
 		const response = await fetch(`${baseUrl}/rest/owner/setup`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload),
 		});
 		if (response.ok) {
-			return extractCookie(response);
+			const header = response.headers.get('set-cookie');
+			if (header) return extractCookie(response);
+			return loginOwner(baseUrl, payload);
+		}
+		if (response.status === 400 || response.status === 409) {
+			return loginOwner(baseUrl, payload);
 		}
 		if (response.status !== 404) {
 			const text = await response.text();
 			throw new Error(`Owner setup failed for ${label}: ${response.status} ${text}`);
 		}
-		await new Promise((resolve) => setTimeout(resolve, 2000));
+		await new Promise((resolve) => setTimeout(resolve, E2E_POLL_MS));
 	}
 	throw new Error(`Timed out waiting for owner setup on ${label}`);
 }
 
-async function createWorkflow(
+export async function createWorkflow(
 	baseUrl: string,
 	cookie: string,
 	workflow: N8nWorkflow,
@@ -242,8 +271,6 @@ async function spawnN8n(
 	brokerPort: number,
 	mqttUrl: string,
 ): Promise<N8nInstance> {
-	await ensureTemplateDatabase();
-
 	if (!fs.existsSync(n8nBin)) {
 		throw new Error(`n8n binary not found at ${n8nBin} (repoRoot=${repoRoot})`);
 	}
@@ -294,11 +321,9 @@ async function spawnN8n(
 
 	child.stdout?.on('data', (chunk) => {
 		logStream.write(chunk);
-		process.stderr.write(`[${name}] ${chunk}`);
 	});
 	child.stderr?.on('data', (chunk) => {
 		logStream.write(chunk);
-		process.stderr.write(`[${name}] ${chunk}`);
 	});
 
 	child.on('exit', (code, signal) => {
@@ -321,14 +346,36 @@ async function spawnN8n(
 	return { name, port, baseUrl, userFolder, process: child, cookie, logStream };
 }
 
-export async function startHarness(
-	seedA: N8nWorkflow,
-	seedB: N8nWorkflow,
-	nonSkillA: N8nWorkflow,
-	nonSkillB: N8nWorkflow,
-): Promise<Harness> {
+export type WorkflowSummary = {
+	id: string;
+	name: string;
+};
+
+export async function listWorkflows(
+	baseUrl: string,
+	cookie: string,
+): Promise<WorkflowSummary[]> {
+	const response = await fetch(`${baseUrl}/rest/workflows`, {
+		headers: { Cookie: cookie },
+	});
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(`Workflow list failed: ${response.status} ${text}`);
+	}
+	const body = (await response.json()) as { data?: WorkflowSummary[] } | WorkflowSummary[];
+	const workflows = Array.isArray(body) ? body : (body.data ?? []);
+	return workflows.map((workflow) => ({
+		id: workflow.id,
+		name: workflow.name,
+	}));
+}
+
+export async function startHarness(seeds: InstanceSeed[]): Promise<Harness> {
 	if (!fs.existsSync(hooksPath)) {
 		throw new Error('Build output missing. Run npm run build first.');
+	}
+	if (seeds.length === 0) {
+		throw new Error('startHarness requires at least one instance seed');
 	}
 
 	await killExistingN8n();
@@ -336,26 +383,28 @@ export async function startHarness(
 	fs.mkdirSync(screenshotsDir, { recursive: true });
 
 	const mqtt = await startMqttBroker();
-	const portA = await getFreePort();
-	const portB = await getFreePort();
-	const brokerA = await getFreePort();
-	const brokerB = await getFreePort();
+	await ensureTemplateDatabase();
 
-	const instanceA = await spawnN8n('instance-a', portA, brokerA, mqtt.url);
-	const instanceB = await spawnN8n('instance-b', portB, brokerB, mqtt.url);
-
-	await createWorkflow(instanceA.baseUrl, instanceA.cookie, seedA);
-	await createWorkflow(instanceA.baseUrl, instanceA.cookie, nonSkillA);
-	await createWorkflow(instanceB.baseUrl, instanceB.cookie, seedB);
-	await createWorkflow(instanceB.baseUrl, instanceB.cookie, nonSkillB);
+	const instances: N8nInstance[] = [];
+	for (const seed of seeds) {
+		const port = await getFreePort();
+		const brokerPort = await getFreePort();
+		const instance = await spawnN8n(seed.name, port, brokerPort, mqtt.url);
+		await Promise.all(
+			seed.workflows.map((workflow) =>
+				createWorkflow(instance.baseUrl, instance.cookie, workflow),
+			),
+		);
+		instances.push(instance);
+	}
 
 	const stop = async () => {
-		await Promise.all([stopN8nInstance(instanceA), stopN8nInstance(instanceB)]);
+		await Promise.all(instances.map((instance) => stopN8nInstance(instance)));
 		await mqtt.close();
 		await cleanupOrphanE2eProcesses();
 	};
 
-	return { mqttUrl: mqtt.url, instanceA, instanceB, stop };
+	return { mqttUrl: mqtt.url, instances, stop };
 }
 
 export function screenshotPath(name: string): string {
@@ -378,8 +427,8 @@ export function parseSessionCookie(setCookieHeader: string): {
 }
 
 export async function createBrowserContext(
-	browser: import('@playwright/test').Browser,
-	instance: N8nInstance,
+	browser: import('playwright').Browser,
+	instance: Pick<N8nInstance, 'name' | 'baseUrl' | 'cookie'>,
 ) {
 	const { name, value } = parseSessionCookie(instance.cookie);
 	const context = await browser.newContext({

@@ -203,14 +203,17 @@ Catalog entries are built from `GET /rest/ecosystem/workflows` on the owning ins
 
 ```bash
 npm test          # unit tests (vitest)
-npm run test:e2e  # real e2e: aedes + dual n8n + Playwright
+npm run test:e2e  # real e2e: Vitest + Playwright, aedes + triple n8n
 npm run test:e2e:cleanup  # kill orphaned n8n from interrupted e2e runs
 ```
 
-E2e seeds two instances with distinct SKILL workflows, asserts mutual discovery, and writes:
+E2e is driven by Vitest (`test/e2e/marketplace.test.ts`) with Playwright in the browser. `test/e2e/run-e2e.ts` boots one MQTT broker and three n8n instances, runs Vitest in-process (same Node process as the harness), then tears everything down. Individual UI waits cap at 15s (`test/e2e/constants.ts`); harness boot caps at 60s; the full Vitest run caps at 75s.
+
+Tests cover discovery, fuzzy search, author/tag filters, download, and register in one consolidated case.
 
 - `test/e2e/screenshots/ecosystem-a.png`
 - `test/e2e/screenshots/ecosystem-b.png`
+- `test/e2e/screenshots/ecosystem-c.png`
 
 ## Lint / format
 

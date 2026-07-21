@@ -70,15 +70,27 @@ When the Ecosystem tab is open, shareable workflows from this instance are adver
 
 ## Screenshots
 
-Mutual discovery between two n8n instances on a shared MQTT broker (e2e harness):
+The e2e harness boots **three** n8n instances on one MQTT broker. Each instance publishes its own shareable workflows (SKILL sticky notes) and lists workflows from the other two. A private workflow without SKILL frontmatter is never shown.
 
-**Instance A** sees a workflow shared from instance B:
+| Instance | Shares locally | Sees from peers |
+| --- | --- | --- |
+| A | `invoice-parser`, `slack-notifier` (alice) | bob's and carol's four skills |
+| B | `csv-importer`, `webhook-relay` (bob) | alice's and carol's four skills |
+| C | `pdf-merger`, `health-ping` (carol) | alice's and bob's four skills |
 
-![Instance A listing instance B's skill](test/e2e/screenshots/ecosystem-a.png)
+**Instance A** — peer list includes bob's and carol's workflows (not its own):
 
-**Instance B** sees a workflow shared from instance A:
+![Instance A Ecosystem tab](test/e2e/screenshots/ecosystem-a.png)
 
-![Instance B listing instance A's skill](test/e2e/screenshots/ecosystem-b.png)
+**Instance B** — peer list includes alice's and carol's workflows:
+
+![Instance B Ecosystem tab](test/e2e/screenshots/ecosystem-b.png)
+
+**Instance C** — peer list includes alice's and bob's workflows:
+
+![Instance C Ecosystem tab](test/e2e/screenshots/ecosystem-c.png)
+
+Regenerate with `npm run test:e2e`.
 
 ## Development
 
