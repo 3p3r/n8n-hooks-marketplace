@@ -16,10 +16,70 @@ The Ecosystem tab uses a configurable [MQTT broker](https://www.rabbitmq.com/doc
 
 The backend hooks are a set of REST helpers to enable Workflow discoverability. Individual Workflows inside the self hosted instances are hidden to the Ecosystem tab by default, unless they include a [Sticky Note node](https://docs.n8n.io/build/understand-workflows/workflow-components/add-notes-and-documentation) in them which is written in Markdown with the format of a [SKILL.md](https://agentskills.io/specification) file.
 
-The metadata field in the Sticky Note node can optionally include the following:
+The SKILL.md frontmatter may optionally include a `metadata` block with:
 
-- author
-- version
-- tags
+- `author`
+- `version`
+- `tags`
 
 The Ecosystem UI allows discovering, filtering, fuzzy searching, downloading and registering other N8N instances' Workflows into the current instance. Majority of these operations happen in UI and with [MQTT.js](https://github.com/mqttjs/MQTT.js). The backend only aids in discovering Workflows that are hidden to the current N8N user and providing a route to return the configured MQTT brokers address for the UI.
+
+## Setup
+
+Build the hooks bundle, then point n8n at it before starting:
+
+```bash
+npm install
+npm run build
+```
+
+```bash
+export EXTERNAL_HOOK_FILES=/absolute/path/to/dist/backend/hooks.cjs
+export EXTERNAL_FRONTEND_HOOKS_URLS=http://localhost:5678/rest/ecosystem/bridge.js
+export MQTT_BROKER_URL=ws://127.0.0.1:1883
+export N8N_SECURE_COOKIE=false
+n8n start
+```
+
+`MQTT_BROKER_URL` must be reachable from the browser. Use a WebSocket URL (`ws://` or `wss://`), not `mqtt://`.
+
+Every n8n instance that should participate must use the **same MQTT broker** and have these hooks enabled.
+
+## Sharing a workflow
+
+Add a Sticky Note to the workflow with YAML frontmatter in SKILL.md format:
+
+```markdown
+---
+name: my-skill
+description: What this workflow does.
+metadata:
+  author: your-name
+  version: "1.0"
+  tags:
+    - ecosystem
+    - demo
+---
+
+Optional body text shown in the note.
+```
+
+Required frontmatter fields: `name`, `description`. The `name` must be lowercase alphanumeric with hyphens (max 64 characters).
+
+When the Ecosystem tab is open, shareable workflows from this instance are advertised to peers on the MQTT broker. Other instances see them in their Ecosystem list; users can download and register them into their own n8n.
+
+## Screenshots
+
+Mutual discovery between two n8n instances on a shared MQTT broker (e2e harness):
+
+**Instance A** sees a workflow shared from instance B:
+
+![Instance A listing instance B's skill](test/e2e/screenshots/ecosystem-a.png)
+
+**Instance B** sees a workflow shared from instance A:
+
+![Instance B listing instance A's skill](test/e2e/screenshots/ecosystem-b.png)
+
+## Development
+
+See [AGENTS.md](AGENTS.md) for local development, tests, and MQTT protocol details.
