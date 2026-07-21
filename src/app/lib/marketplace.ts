@@ -1,3 +1,4 @@
+import mqtt, { type MqttClient } from 'mqtt';
 import type {
 	CatalogEntry,
 	CatalogMessage,
@@ -87,27 +88,14 @@ export async function registerWorkflow(workflow: N8nWorkflow): Promise<void> {
 export type MqttHandlers = {
 	onCatalog: (message: CatalogMessage) => void;
 	onWorkflowRequest: (message: WorkflowRequestMessage) => Promise<void>;
-	onWorkflowReply: (message: WorkflowReplyMessage) => void;
+	onWorkflowReply?: (message: WorkflowReplyMessage) => void;
 };
 
-type MqttModule = typeof import('mqtt');
-
-function resolveMqttModule(mqttModule: MqttModule): MqttModule {
-	const candidate = mqttModule as MqttModule & { default?: MqttModule };
-	const mod = candidate.default?.connect ? candidate.default : candidate;
-	if (typeof mod.connect !== 'function') {
-		throw new Error('MQTT module does not export connect()');
-	}
-	return mod;
-}
-
 export async function connectMarketplace(
-	mqttModule: MqttModule,
 	url: string,
 	instanceId: string,
 	handlers: MqttHandlers,
-): Promise<import('mqtt').MqttClient> {
-	const mqtt = resolveMqttModule(mqttModule);
+): Promise<MqttClient> {
 	const client = mqtt.connect(url, {
 		keepalive: 30,
 		reconnectPeriod: 5_000,
@@ -142,7 +130,7 @@ export async function connectMarketplace(
 		}
 
 		if (topic.startsWith('ecosystem/reply/')) {
-			handlers.onWorkflowReply(data as WorkflowReplyMessage);
+			handlers.onWorkflowReply?.(data as WorkflowReplyMessage);
 		}
 	});
 
@@ -150,7 +138,7 @@ export async function connectMarketplace(
 }
 
 export function publishCatalog(
-	client: import('mqtt').MqttClient,
+	client: MqttClient,
 	instanceId: string,
 	instanceName: string,
 	entries: CatalogEntry[],
@@ -160,7 +148,7 @@ export function publishCatalog(
 }
 
 export function requestWorkflow(
-	client: import('mqtt').MqttClient,
+	client: MqttClient,
 	targetInstanceId: string,
 	requesterId: string,
 	workflowId: string,
@@ -173,7 +161,7 @@ export function requestWorkflow(
 }
 
 export function publishWorkflowReply(
-	client: import('mqtt').MqttClient,
+	client: MqttClient,
 	replyTopicName: string,
 	workflowId: string,
 	workflow: N8nWorkflow,

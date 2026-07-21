@@ -11,6 +11,7 @@ import {
 	getInstanceName,
 	publishCatalog,
 	publishWorkflowReply,
+	registerWorkflow,
 	requestWorkflow,
 } from './lib/marketplace';
 import { filterCatalog, useFuzzyCatalog } from './lib/search';
@@ -50,12 +51,11 @@ export function App() {
 
 		const run = async () => {
 			try {
-				const mqtt = await import('mqtt');
 				const [url, shareables] = await Promise.all([fetchMqttUrl(), fetchLocalShareables()]);
 				const instanceName = getInstanceName();
 				const entries = buildCatalogEntries(instanceId, instanceName, shareables);
 
-				mqttClient = await connectMarketplace(mqtt, url, instanceId, {
+				mqttClient = await connectMarketplace(url, instanceId, {
 					onCatalog: (message) => {
 						if (!active || message.instanceId === instanceId) return;
 						setPeerCatalogs((current) => ({ ...current, [message.instanceId]: message }));
@@ -64,9 +64,6 @@ export function App() {
 						if (!mqttClient) return;
 						const workflow = await fetchShareableWorkflow(message.workflowId);
 						publishWorkflowReply(mqttClient, message.replyTopic, message.workflowId, workflow);
-					},
-					onWorkflowReply: () => {
-						// handled per-request listener
 					},
 				});
 
@@ -137,7 +134,6 @@ export function App() {
 		setRegisteringId(entry.workflowId);
 		try {
 			const workflow = downloadedWorkflows[entry.workflowId] ?? (await downloadEntry(entry));
-			const { registerWorkflow } = await import('./lib/marketplace');
 			await registerWorkflow(workflow);
 		} finally {
 			setRegisteringId(null);

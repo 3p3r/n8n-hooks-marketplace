@@ -1,5 +1,5 @@
 dist/
+.dev/
 test/e2e/.tmp/
-test/e2e/screenshots/
 *.tsbuildinfo
 node_modules

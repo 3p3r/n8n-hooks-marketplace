@@ -11,7 +11,7 @@
 		"build:app": "vite build",
 		"dev:app": "vite",
 		"dev:n8n": "node --import tsx scripts/dev-n8n.ts",
-		"dev": "npm run build && concurrently \"npm run dev:app\" \"npm run dev:n8n\"",
+		"dev": "npm run build && tsx scripts/dev.ts",
 		"lint": "biome check .",
 		"format": "biome check --write .",
 		"test": "vitest run",
@@ -39,7 +39,7 @@
 		"yaml": "^2.8.2"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.3.11",
+		"@biomejs/biome": "^2.5.3",
 		"@playwright/test": "^1.57.0",
 		"@types/express": "^5.0.6",
 		"@types/node": "^25.0.3",
@@ -47,7 +47,6 @@
 		"@types/react-dom": "^19.2.3",
 		"@vitejs/plugin-react": "^5.1.2",
 		"aedes": "^0.51.3",
-		"concurrently": "^9.2.1",
 		"n8n": "^2.31.0",
 		"tsup": "^8.5.1",
 		"tsx": "^4.21.0",
