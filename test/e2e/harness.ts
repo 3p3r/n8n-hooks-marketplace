@@ -22,11 +22,19 @@ const templateDir = path.join(repoRoot, 'test/e2e/.tmp/template');
 const nodeBin = 'node';
 const n8nBin = path.join(repoRoot, 'node_modules/n8n/bin/n8n');
 
+export type EcosystemHarnessConfig = {
+	instanceId: string;
+	mode: 'production';
+	appUrl: string;
+};
+
 export type N8nInstance = {
 	name: string;
 	port: number;
 	baseUrl: string;
 	instanceId: string;
+	mode: 'production';
+	appUrl: string;
 	userFolder: string;
 	process: ChildProcess;
 	cookie: string;
@@ -309,7 +317,30 @@ async function ensureTemplateDatabase(): Promise<void> {
 	}
 }
 
-async function fetchInstanceId(baseUrl: string, cookie: string): Promise<string> {
+const PRODUCTION_APP_URL_SUFFIX = '/rest/ecosystem/app/';
+
+function assertProductionConfig(
+	baseUrl: string,
+	body: { instanceId: string; mode: string; appUrl: string },
+): EcosystemHarnessConfig {
+	if (body.mode !== 'production') {
+		throw new Error(`Expected production mode for ${baseUrl}, got ${body.mode}`);
+	}
+	if (!body.appUrl.endsWith(PRODUCTION_APP_URL_SUFFIX)) {
+		throw new Error(
+			`Expected appUrl ending in ${PRODUCTION_APP_URL_SUFFIX} for ${baseUrl}, got ${body.appUrl}`,
+		);
+	}
+	if (body.appUrl.includes(':5173')) {
+		throw new Error(`Expected built app URL for ${baseUrl}, got Vite dev URL ${body.appUrl}`);
+	}
+	return { instanceId: body.instanceId, mode: 'production', appUrl: body.appUrl };
+}
+
+export async function fetchEcosystemConfig(
+	baseUrl: string,
+	cookie: string,
+): Promise<EcosystemHarnessConfig> {
 	const response = await fetch(`${baseUrl}/rest/ecosystem/config`, {
 		headers: { Cookie: cookie },
 	});
@@ -317,8 +348,8 @@ async function fetchInstanceId(baseUrl: string, cookie: string): Promise<string>
 		const text = await response.text();
 		throw new Error(`Config fetch failed: ${response.status} ${text}`);
 	}
-	const body = (await response.json()) as { instanceId: string };
-	return body.instanceId;
+	const body = (await response.json()) as { instanceId: string; mode: string; appUrl: string };
+	return assertProductionConfig(baseUrl, body);
 }
 
 async function spawnN8n(
@@ -399,9 +430,20 @@ async function spawnN8n(
 		throw new Error(`Auth check failed for ${name}: ${settingsCheck.status}`);
 	}
 
-	const instanceId = await fetchInstanceId(baseUrl, cookie);
+	const { instanceId, mode, appUrl } = await fetchEcosystemConfig(baseUrl, cookie);
 
-	return { name, port, baseUrl, instanceId, userFolder, process: child, cookie, logStream };
+	return {
+		name,
+		port,
+		baseUrl,
+		instanceId,
+		mode,
+		appUrl,
+		userFolder,
+		process: child,
+		cookie,
+		logStream,
+	};
 }
 
 export type WorkflowSummary = {

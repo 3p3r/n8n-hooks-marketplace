@@ -15,6 +15,8 @@ export type HarnessState = {
 		baseUrl: string;
 		cookie: string;
 		instanceId: string;
+		mode: 'production';
+		appUrl: string;
 	}>;
 };
 

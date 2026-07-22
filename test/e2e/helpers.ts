@@ -57,6 +57,12 @@ export async function expectInstanceId(frame: FrameLocator, expected: string): P
 	await expect(locator).toHaveText(expected);
 }
 
+export async function expectProductionIframe(page: Page, expectedAppUrl: string): Promise<void> {
+	const iframe = page.locator('[data-ecosystem-iframe]');
+	await expect(iframe).toBeVisible({ timeout: E2E_UI_TIMEOUT_MS });
+	await expect(iframe).toHaveAttribute('src', expectedAppUrl);
+}
+
 export async function expectSkillOrder(frame: FrameLocator, expected: string[]): Promise<void> {
 	await vitestExpect
 		.poll(async () => visibleSkillNames(frame), {

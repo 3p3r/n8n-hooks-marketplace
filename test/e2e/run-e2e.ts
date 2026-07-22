@@ -25,6 +25,8 @@ const state: HarnessState = {
 		baseUrl: instance.baseUrl,
 		cookie: instance.cookie,
 		instanceId: instance.instanceId,
+		mode: instance.mode,
+		appUrl: instance.appUrl,
 	})),
 };
 

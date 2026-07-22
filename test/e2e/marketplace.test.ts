@@ -24,6 +24,7 @@ import {
 	clickFileDownload,
 	clickImport,
 	expectInstanceId,
+	expectProductionIframe,
 	expectSkillAbsent,
 	expectSkillNames,
 	expectSkillOrder,
@@ -39,6 +40,7 @@ type InstancePages = {
 	baseUrl: string;
 	cookie: string;
 	instanceId: string;
+	appUrl: string;
 	context: BrowserContext;
 	page: Page;
 	frame: FrameLocator;
@@ -66,6 +68,7 @@ async function openInstance(name: string): Promise<InstancePages> {
 		baseUrl: instance.baseUrl,
 		cookie: instance.cookie,
 		instanceId: instance.instanceId,
+		appUrl: instance.appUrl,
 		context,
 		page,
 		frame,
@@ -102,9 +105,13 @@ afterAll(async () => {
 
 describe('ecosystem marketplace e2e', () => {
 	it('discovers, filters, copies, imports, and downloads workflows across three instances', async () => {
-		const frameA = getInstance('instance-a').frame;
+		const instanceA = getInstance('instance-a');
+		const frameA = instanceA.frame;
 
-		await expectInstanceId(frameA, getInstance('instance-a').instanceId);
+		expect(instanceA.appUrl).toMatch(/\/rest\/ecosystem\/app\/$/);
+		expect(instanceA.appUrl).not.toContain(':5173');
+		await expectProductionIframe(instanceA.page, instanceA.appUrl);
+		await expectInstanceId(frameA, instanceA.instanceId);
 		await waitForSkills(frameA, visibleSkillsWithOwn('instance-a'));
 		await expectSkillOrder(frameA, visibleSkillsWithOwn('instance-a'));
 
@@ -171,7 +178,6 @@ describe('ecosystem marketplace e2e', () => {
 		expect(Array.isArray(clipboardWorkflow.nodes)).toBe(true);
 		expect(clipboardWorkflow.name).toContain('CSV Importer');
 
-		const instanceA = getInstance('instance-a');
 		const importedPdf = `${pdfMerger.name} (imported)`;
 		const beforePdf = await listWorkflows(instanceA.baseUrl, instanceA.cookie);
 		expect(beforePdf.some((workflow) => workflow.name === importedPdf)).toBe(false);

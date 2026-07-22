@@ -226,13 +226,14 @@ Catalog entries are built from the owning instance's workflow DB. Full workflow 
 ## Tests
 
 ```bash
-npm test          # unit tests (vitest)
-npm run test:e2e  # real e2e: Vitest + Playwright, aedes + triple n8n
+npm test              # production e2e (alias for test:e2e:prod)
+npm run test:e2e      # production e2e: Vitest + Playwright, aedes + triple n8n
+npm run test:e2e:prod # alias for test:e2e (used by CI)
 npm run test:e2e:cleanup  # kill orphaned n8n from interrupted e2e runs
-npm run dev:e2e   # harness only: triple n8n + MQTT for manual UI review (Ctrl+C to stop)
+npm run dev:e2e       # harness only: triple n8n + MQTT for manual UI review (Ctrl+C to stop)
 ```
 
-E2e is driven by Vitest (`test/e2e/marketplace.test.ts`) with Playwright in the browser. `test/e2e/run-e2e.ts` boots one MQTT broker and three n8n instances, runs Vitest in-process (same Node process as the harness), then tears everything down. Individual UI waits cap at 15s (`test/e2e/constants.ts`); harness boot caps at 60s; the full Vitest run caps at 100s.
+E2e is driven by Vitest (`test/e2e/marketplace.test.ts`) with Playwright in the browser. `test/e2e/run-e2e.ts` boots one MQTT broker and three n8n instances, runs Vitest in-process (same Node process as the harness), then tears everything down. The harness always sets `ecosystem_appUrl` to empty so the iframe loads the built app from `/rest/ecosystem/app/` (production mode, no Vite). Boot asserts `mode: production` and rejects Vite dev URLs. CI runs lint and `npm test` on push and pull request. Individual UI waits cap at 15s (`test/e2e/constants.ts`); harness boot caps at 60s; the full Vitest run caps at 100s.
 
 Tests cover instance ID, hide-own toggle, backend-published peer discovery from a single tab, alphabetical catalog order, fuzzy search, author/tag filters, copy, import, file download, and own-import disabled in one consolidated case.
 
