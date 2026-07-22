@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 import aedes from 'aedes';
 import ws from 'websocket-stream';
 import type { N8nWorkflow } from '../../src/shared/index';
-import { ecosystemInstanceId } from '../fixtures/workflows';
 import {
 	cleanupOrphanE2eProcesses,
 	killProcessTree,
@@ -27,6 +26,7 @@ export type N8nInstance = {
 	name: string;
 	port: number;
 	baseUrl: string;
+	instanceId: string;
 	userFolder: string;
 	process: ChildProcess;
 	cookie: string;
@@ -113,11 +113,7 @@ async function startMqttBroker(): Promise<{ url: string; close: () => Promise<vo
 
 async function waitForHealth(baseUrl: string, timeoutMs = E2E_HARNESS_TIMEOUT_MS): Promise<void> {
 	const started = Date.now();
-	const endpoints = [
-		`${baseUrl}/rest/ecosystem/config`,
-		`${baseUrl}/healthz/readiness`,
-		`${baseUrl}/healthz`,
-	];
+	const endpoints = [`${baseUrl}/healthz/readiness`, `${baseUrl}/healthz`];
 	while (Date.now() - started < timeoutMs) {
 		for (const endpoint of endpoints) {
 			try {
@@ -125,6 +121,40 @@ async function waitForHealth(baseUrl: string, timeoutMs = E2E_HARNESS_TIMEOUT_MS
 				if (response.ok) return;
 			} catch {
 				// retry
+			}
+		}
+		await new Promise((resolve) => setTimeout(resolve, E2E_POLL_MS));
+	}
+	throw new Error(`Timed out waiting for n8n at ${baseUrl}`);
+}
+
+async function waitForN8nReady(
+	baseUrl: string,
+	options?: { requireEcosystem?: boolean },
+): Promise<void> {
+	await waitForHealth(baseUrl);
+	const started = Date.now();
+	while (Date.now() - started < E2E_HARNESS_TIMEOUT_MS) {
+		try {
+			const setup = await fetch(`${baseUrl}/rest/owner/setup`);
+			const setupText = await setup.text();
+			if (setupText.includes('n8n is starting up')) {
+				throw new Error('still starting');
+			}
+			if (options?.requireEcosystem) {
+				const config = await fetch(`${baseUrl}/rest/ecosystem/config`);
+				if (!config.ok) {
+					throw new Error('ecosystem not ready');
+				}
+			}
+			return;
+		} catch (error) {
+			if (error instanceof Error && error.message === 'still starting') {
+				// retry
+			} else if (error instanceof Error && error.message === 'ecosystem not ready') {
+				// retry
+			} else if (!(error instanceof TypeError)) {
+				throw error;
 			}
 		}
 		await new Promise((resolve) => setTimeout(resolve, E2E_POLL_MS));
@@ -271,12 +301,24 @@ async function ensureTemplateDatabase(): Promise<void> {
 		stdio: 'ignore',
 	});
 
-	await waitForHealth(baseUrl);
+	await waitForN8nReady(baseUrl);
 	if (child.pid) {
 		registerE2ePid(child.pid);
 		killProcessTree(child.pid, 'SIGTERM');
 		await waitForProcessExit(child.pid);
 	}
+}
+
+async function fetchInstanceId(baseUrl: string, cookie: string): Promise<string> {
+	const response = await fetch(`${baseUrl}/rest/ecosystem/config`, {
+		headers: { Cookie: cookie },
+	});
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(`Config fetch failed: ${response.status} ${text}`);
+	}
+	const body = (await response.json()) as { instanceId: string };
+	return body.instanceId;
 }
 
 async function spawnN8n(
@@ -309,9 +351,8 @@ async function spawnN8n(
 			N8N_USER_FOLDER: userFolder,
 			EXTERNAL_HOOK_FILES: hooksPath,
 			EXTERNAL_FRONTEND_HOOKS_URLS: bridgeUrl,
-			MQTT_BROKER_URL: mqttUrl,
-			ECOSYSTEM_INSTANCE_ID: ecosystemInstanceId(name),
-			ECOSYSTEM_INSTANCE_NAME: name,
+			ecosystem_mqttBrokerUrl: mqttUrl,
+			ecosystem_appUrl: '',
 			N8N_DIAGNOSTICS_ENABLED: 'false',
 			N8N_VERSION_NOTIFICATIONS_ENABLED: 'false',
 			N8N_TEMPLATES_ENABLED: 'false',
@@ -322,7 +363,6 @@ async function spawnN8n(
 			N8N_RUNNERS_TASK_TIMEOUT: '300',
 			N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: '2147483648',
 			N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: '5000',
-			ECOSYSTEM_APP_URL: '',
 		},
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
@@ -349,7 +389,7 @@ async function spawnN8n(
 		}
 	});
 
-	await waitForHealth(baseUrl);
+	await waitForN8nReady(baseUrl, { requireEcosystem: true });
 	const cookie = await setupOwner(baseUrl, name);
 
 	const settingsCheck = await fetch(`${baseUrl}/rest/settings`, {
@@ -359,7 +399,9 @@ async function spawnN8n(
 		throw new Error(`Auth check failed for ${name}: ${settingsCheck.status}`);
 	}
 
-	return { name, port, baseUrl, userFolder, process: child, cookie, logStream };
+	const instanceId = await fetchInstanceId(baseUrl, cookie);
+
+	return { name, port, baseUrl, instanceId, userFolder, process: child, cookie, logStream };
 }
 
 export type WorkflowSummary = {

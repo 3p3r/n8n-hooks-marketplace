@@ -10,7 +10,6 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	csvImporter,
-	ecosystemInstanceId,
 	localSkillNames,
 	pdfMerger,
 	peerSkillsFor,
@@ -105,7 +104,7 @@ describe('ecosystem marketplace e2e', () => {
 	it('discovers, filters, copies, imports, and downloads workflows across three instances', async () => {
 		const frameA = getInstance('instance-a').frame;
 
-		await expectInstanceId(frameA, ecosystemInstanceId('instance-a'));
+		await expectInstanceId(frameA, getInstance('instance-a').instanceId);
 		await waitForSkills(frameA, visibleSkillsWithOwn('instance-a'));
 		await expectSkillOrder(frameA, visibleSkillsWithOwn('instance-a'));
 
@@ -115,8 +114,8 @@ describe('ecosystem marketplace e2e', () => {
 		const frameB = getInstance('instance-b').frame;
 		const frameC = getInstance('instance-c').frame;
 
-		await expectInstanceId(frameB, ecosystemInstanceId('instance-b'));
-		await expectInstanceId(frameC, ecosystemInstanceId('instance-c'));
+		await expectInstanceId(frameB, getInstance('instance-b').instanceId);
+		await expectInstanceId(frameC, getInstance('instance-c').instanceId);
 
 		await waitForSkills(frameB, visibleSkillsWithOwn('instance-b'));
 		await waitForSkills(frameC, visibleSkillsWithOwn('instance-c'));

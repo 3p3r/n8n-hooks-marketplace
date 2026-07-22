@@ -21,7 +21,6 @@ export type EcosystemConfig = {
 	appUrl: string;
 	stylesheets: string[];
 	instanceId: string;
-	instanceName: string;
 };
 
 export async function fetchEcosystemConfig(): Promise<EcosystemConfig> {

@@ -10,7 +10,7 @@ export function useFuzzyCatalog(entries: CatalogEntry[], query: string): Catalog
 					'skill.name',
 					'skill.description',
 					'workflowName',
-					'instanceName',
+					'instanceId',
 					'skill.metadata.author',
 					'skill.metadata.tags',
 				],

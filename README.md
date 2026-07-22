@@ -36,14 +36,15 @@ npm run build
 ```bash
 export EXTERNAL_HOOK_FILES=/absolute/path/to/dist/backend/hooks.cjs
 export EXTERNAL_FRONTEND_HOOKS_URLS=http://localhost:5678/rest/ecosystem/bridge.js
-export MQTT_BROKER_URL=ws://127.0.0.1:1883
-export ECOSYSTEM_INSTANCE_ID=your-instance-uuid
-export ECOSYSTEM_INSTANCE_NAME=my-n8n
+export ecosystem_mqttBrokerUrl=ws://127.0.0.1:1883
+export ecosystem_instanceId=optional-override
 export N8N_SECURE_COOKIE=false
 n8n start
 ```
 
-`MQTT_BROKER_URL` must be reachable from the browser. Use a WebSocket URL (`ws://` or `wss://`), not `mqtt://`.
+`ecosystem.mqttBrokerUrl` must be reachable from the browser. Use a WebSocket URL (`ws://` or `wss://`), not `mqtt://`.
+
+If `ecosystem_instanceId` is omitted, the hook derives an 8-character id from the n8n listen address and machine id.
 
 Every n8n instance that should participate must use the **same MQTT broker** and have these hooks enabled.
 

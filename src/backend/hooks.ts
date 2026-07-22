@@ -1,13 +1,17 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import debug from 'debug';
 import type { Request, Response } from 'express';
 import {
 	extractShareableFromWorkflow,
 	extractShareablesFromWorkflows,
 	type N8nWorkflow,
 } from '../shared/index';
+import { loadConfig } from './config';
 import { startEcosystemMqtt } from './ecosystem-mqtt';
+
+const log = debug('ecosystem:backend');
 
 type HookContext = {
 	dbCollections: {
@@ -36,6 +40,7 @@ const distRoot = path.join(__dirname, '..');
 const bridgePath = path.join(distRoot, 'bridge', 'index.js');
 const appRoot = path.join(distRoot, 'app');
 const requireFromHooks = createRequire(__filename);
+const config = loadConfig();
 
 let republishCatalog: () => Promise<void>;
 
@@ -92,56 +97,20 @@ function workflowFromEntity(entity: Record<string, unknown>): N8nWorkflow | null
 	};
 }
 
-function getMqttUrl(): string {
-	const url = process.env.MQTT_BROKER_URL?.trim();
-	if (!url) {
-		throw new Error('MQTT_BROKER_URL is not configured');
-	}
-	return url;
-}
-
-function getEcosystemAppUrl(): string | undefined {
-	return process.env.ECOSYSTEM_APP_URL?.trim() || undefined;
-}
-
-function getInstanceIdentity(): { instanceId: string; instanceName: string } {
-	const instanceId = process.env.ECOSYSTEM_INSTANCE_ID?.trim();
-	const instanceName = process.env.ECOSYSTEM_INSTANCE_NAME?.trim();
-	if (!instanceId || !instanceName) {
-		throw new Error('ECOSYSTEM_INSTANCE_ID and ECOSYSTEM_INSTANCE_NAME are required');
-	}
-	return { instanceId, instanceName };
-}
-
 function registerRoutes(server: N8nServer, ctx: HookContext): void {
 	const base = `/${server.restEndpoint}/ecosystem`;
-	const { instanceId, instanceName } = getInstanceIdentity();
 
 	server.app.get(`${base}/mqtt`, async (_req, res) => {
-		try {
-			sendJson(res, 200, { url: getMqttUrl() });
-		} catch (error) {
-			sendJson(res, 500, {
-				message: error instanceof Error ? error.message : 'MQTT broker not configured',
-			});
-		}
+		sendJson(res, 200, { url: config.mqttBrokerUrl });
 	});
 
 	server.app.get(`${base}/config`, async (req, res) => {
-		try {
-			const devUrl = getEcosystemAppUrl();
-			sendJson(res, 200, {
-				mode: devUrl ? 'development' : 'production',
-				appUrl: devUrl ?? `${base}/app/`,
-				stylesheets: resolveN8nStylesheets(req),
-				instanceId,
-				instanceName,
-			});
-		} catch (error) {
-			sendJson(res, 500, {
-				message: error instanceof Error ? error.message : 'Failed to resolve ecosystem config',
-			});
-		}
+		sendJson(res, 200, {
+			mode: config.appUrl ? 'development' : 'production',
+			appUrl: config.appUrl ?? `${base}/app/`,
+			stylesheets: resolveN8nStylesheets(req),
+			instanceId: config.instanceId,
+		});
 	});
 
 	server.app.get(`${base}/bridge.js`, async (_req, res) => {
@@ -204,13 +173,12 @@ const hooks = {
 	n8n: {
 		ready: [
 			async function (this: HookContext, server: N8nServer) {
-				const { instanceId, instanceName } = getInstanceIdentity();
+				log('ready instanceId=%s', config.instanceId);
 				registerRoutes(server, this);
 				const mqtt = await startEcosystemMqtt(
 					this.dbCollections.Workflow,
-					instanceId,
-					instanceName,
-					getMqttUrl(),
+					config.instanceId,
+					config.mqttBrokerUrl,
 				);
 				republishCatalog = mqtt.republishCatalog;
 			},

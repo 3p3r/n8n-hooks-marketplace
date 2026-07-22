@@ -20,7 +20,6 @@ export type ShareableWorkflowSummary = {
 
 export type CatalogEntry = {
 	instanceId: string;
-	instanceName: string;
 	workflowId: string;
 	workflowName: string;
 	skill: SkillFrontmatter;
@@ -29,7 +28,6 @@ export type CatalogEntry = {
 
 export type CatalogMessage = {
 	instanceId: string;
-	instanceName: string;
 	entries: CatalogEntry[];
 };
 

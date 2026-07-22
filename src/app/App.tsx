@@ -1,6 +1,6 @@
 import type { MqttClient } from 'mqtt';
 import { useEffect, useMemo, useState } from 'react';
-import type { CatalogEntry, CatalogMessage } from '../../shared/index';
+import type { CatalogEntry, CatalogMessage } from '../shared/index';
 import {
 	connectMarketplace,
 	downloadWorkflowJson,
@@ -212,7 +212,7 @@ export function App() {
 								<h2 data-ecosystem-skill-name="true">{entry.skill.name}</h2>
 								<p>{entry.skill.description}</p>
 								<p className="ecosystem__meta">
-									<span data-ecosystem-instance="true">{entry.instanceName}</span>
+									<span data-ecosystem-instance="true">{entry.instanceId}</span>
 									{entry.skill.metadata?.author ? (
 										<span data-ecosystem-author="true"> · {entry.skill.metadata.author}</span>
 									) : null}

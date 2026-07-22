@@ -17,9 +17,7 @@ const n8nPort = Number(process.env.N8N_PORT ?? 5678);
 const vitePort = Number(process.env.VITE_PORT ?? 5173);
 const baseUrl = `http://127.0.0.1:${n8nPort}`;
 const ecosystemAppUrl =
-	process.env.ECOSYSTEM_APP_URL ?? `http://localhost:${vitePort}/rest/ecosystem/app/`;
-const ecosystemInstanceId = 'dddddddd-dddd-4ddd-dddd-dddddddddddd';
-const ecosystemInstanceName = 'dev';
+	process.env.ecosystem_appUrl ?? `http://localhost:${vitePort}/rest/ecosystem/app/`;
 
 let n8nProcess: ChildProcess | null = null;
 let closeMqtt: (() => Promise<void>) | null = null;
@@ -188,11 +186,11 @@ async function main(): Promise<void> {
 	fs.mkdirSync(userFolder, { recursive: true });
 	await cleanupDevProcesses();
 
-	const mqttUrl = process.env.MQTT_BROKER_URL?.trim();
+	const mqttUrl = process.env.ecosystem_mqttBrokerUrl?.trim();
 	let mqtt: { url: string; close: () => Promise<void> };
 	if (mqttUrl) {
 		mqtt = { url: mqttUrl, close: async () => undefined };
-		console.log(`[dev] Using MQTT broker from MQTT_BROKER_URL: ${mqttUrl}`);
+		console.log(`[dev] Using MQTT broker from ecosystem_mqttBrokerUrl: ${mqttUrl}`);
 	} else {
 		mqtt = await startMqttBroker();
 		closeMqtt = mqtt.close;
@@ -213,10 +211,8 @@ async function main(): Promise<void> {
 			N8N_USER_FOLDER: userFolder,
 			EXTERNAL_HOOK_FILES: hooksPath,
 			EXTERNAL_FRONTEND_HOOKS_URLS: bridgeUrl,
-			MQTT_BROKER_URL: mqtt.url,
-			ECOSYSTEM_APP_URL: ecosystemAppUrl,
-			ECOSYSTEM_INSTANCE_ID: ecosystemInstanceId,
-			ECOSYSTEM_INSTANCE_NAME: ecosystemInstanceName,
+			ecosystem_mqttBrokerUrl: mqtt.url,
+			ecosystem_appUrl: ecosystemAppUrl,
 			N8N_DIAGNOSTICS_ENABLED: 'false',
 			N8N_VERSION_NOTIFICATIONS_ENABLED: 'false',
 			N8N_TEMPLATES_ENABLED: 'false',

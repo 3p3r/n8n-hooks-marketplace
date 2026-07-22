@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startVitest } from 'vitest/node';
-import { ecosystemInstanceId, seedPlan } from '../fixtures/workflows';
+import { seedPlan } from '../fixtures/workflows';
 import { cleanupOrphanE2eProcesses } from './cleanup';
 import { E2E_HARNESS_TIMEOUT_MS } from './constants';
 import { startHarness } from './harness';
@@ -24,7 +24,7 @@ const state: HarnessState = {
 		port: instance.port,
 		baseUrl: instance.baseUrl,
 		cookie: instance.cookie,
-		instanceId: ecosystemInstanceId(instance.name),
+		instanceId: instance.instanceId,
 	})),
 };
 

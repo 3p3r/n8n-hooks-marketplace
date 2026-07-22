@@ -114,20 +114,6 @@ export const healthPing = createSkillWorkflow(
 	['ops', 'alerts'],
 );
 
-export const ecosystemInstanceIds = {
-	'instance-a': 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
-	'instance-b': 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
-	'instance-c': 'cccccccc-cccc-4ccc-cccc-cccccccccccc',
-} as const;
-
-export function ecosystemInstanceId(name: string): string {
-	const id = ecosystemInstanceIds[name as keyof typeof ecosystemInstanceIds];
-	if (!id) {
-		throw new Error(`Unknown instance: ${name}`);
-	}
-	return id;
-}
-
 export type InstanceSeed = {
 	name: string;
 	workflows: N8nWorkflow[];

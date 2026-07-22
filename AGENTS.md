@@ -8,6 +8,7 @@ Developer notes for the n8n-hooks-marketplace codebase.
 src/
   shared/          # SKILL parser, catalog extraction, MQTT topic helpers/types
   backend/hooks.ts # n8n external hook (REST + MQTT catalog/replies)
+  backend/config.ts     # rc config + default instanceId hash
   backend/ecosystem-mqtt.ts # Backend MQTT client for catalog publish and workflow replies
   bridge/index.ts  # Injects Ecosystem tab + iframe into n8n editor
   app/             # React Ecosystem UI (Vite)
@@ -51,20 +52,40 @@ Starts Vite (HMR), an embedded MQTT broker (WebSocket), and n8n with hooks wired
 
 Dev state: `.dev/n8n/` (gitignored). Override login with `N8N_DEV_EMAIL` / `N8N_DEV_PASSWORD`.
 
-To use an external broker instead of the embedded one, set `MQTT_BROKER_URL` before `npm run dev`.
+To use an external broker instead of the embedded one, set `ecosystem_mqttBrokerUrl` before `npm run dev`.
 
-## Environment variables
+## Configuration
+
+Ecosystem settings are read via [`rc`](https://www.npmjs.com/package/rc) under the app name `ecosystem`:
+
+| Key | Env var | Purpose |
+| --- | --- | --- |
+| `mqttBrokerUrl` | `ecosystem_mqttBrokerUrl` | WebSocket MQTT broker URL (`ws://` / `wss://`) |
+| `instanceId` | `ecosystem_instanceId` | Override instance id (default: first 8 hex chars of sha256(n8n address + machine id)) |
+| `appUrl` | `ecosystem_appUrl` | Optional Vite dev server URL for the iframe (omit in production) |
+
+Default `instanceId` = first 8 characters of `sha256(hex)` of `N8N_EDITOR_BASE_URL` (or `http://N8N_HOST:N8N_PORT`) concatenated with `node-machine-id` machine id. An `ecosystem.instanceId` override is used as-is.
+
+Example `.ecosystemrc`:
+
+```json
+{
+  "mqttBrokerUrl": "ws://127.0.0.1:1883",
+  "instanceId": "optional-override-hex"
+}
+```
+
+Set `DEBUG=ecosystem:*` for backend/MQTT logs.
+
+## n8n environment variables
 
 | Variable | Purpose |
 | --- | --- |
 | `EXTERNAL_HOOK_FILES` | Absolute path to `dist/backend/hooks.cjs` |
 | `EXTERNAL_FRONTEND_HOOKS_URLS` | URL(s) to `bridge.js` on this n8n instance (`;`-separated) |
-| `MQTT_BROKER_URL` | WebSocket MQTT broker URL (`ws://` / `wss://`) |
-| `ECOSYSTEM_INSTANCE_ID` | Stable UUID for this n8n instance (catalog + request routing) |
-| `ECOSYSTEM_INSTANCE_NAME` | Human-readable instance name shown in the Ecosystem UI |
-| `ECOSYSTEM_APP_URL` | Optional Vite dev server URL for the iframe (omit in production) |
 | `N8N_SECURE_COOKIE` | Set `false` for local HTTP testing |
 | `N8N_PORT` | n8n listen port (default `5678`; used by Vite proxy in dev) |
+| `N8N_EDITOR_BASE_URL` | Used in default instance id hash when `ecosystem_instanceId` is unset |
 
 ## Backend REST routes
 
@@ -72,12 +93,12 @@ Registered on `n8n.ready` under `/{restEndpoint}/ecosystem/`:
 
 | Route | Purpose |
 | --- | --- |
-| `GET /mqtt` | Returns `{ url }` from `MQTT_BROKER_URL` |
-| `GET /config` | Returns `{ mode, appUrl, stylesheets, instanceId, instanceName }` for bridge iframe and app styling |
+| `GET /mqtt` | Returns `{ url }` from `ecosystem.mqttBrokerUrl` |
+| `GET /config` | Returns `{ mode, appUrl, stylesheets, instanceId }` for bridge iframe and app styling |
 | `GET /bridge.js` | Serves bridge bundle |
 | `GET /workflows` | Lists local shareable workflows (SKILL sticky note) |
 | `GET /workflows/:id` | Full workflow JSON for a shareable workflow |
-| `GET /app/*` | Serves built React app (or Vite URL in dev via `ECOSYSTEM_APP_URL`) |
+| `GET /app/*` | Serves built React app (or Vite URL in dev via `ecosystem.appUrl`) |
 
 Shareable detection: scan workflow `nodes` for `type === 'n8n-nodes-base.stickyNote'`, parse `parameters.content` as SKILL.md frontmatter. Require `name` + `description`; optional `metadata.author`, `metadata.version`, `metadata.tags`.
 
@@ -105,13 +126,13 @@ On boot, fetches `/rest/ecosystem/config` and injects each `stylesheets` URL as 
 
 Workflow fetch uses a 15s timeout. Own workflows resolve via `GET /rest/ecosystem/workflows/:id`; peers use MQTT request/reply to the owning backend. Per-action errors render at `data-ecosystem-action-error`.
 
-Instance identity comes from `/rest/ecosystem/config` (`ECOSYSTEM_INSTANCE_ID` / `ECOSYSTEM_INSTANCE_NAME`). The header shows the instance ID at `data-ecosystem-instance-id`. The browser keeps a `requesterId` in `localStorage` (`ecosystem-requester-id`) for MQTT reply routing.
+Instance identity comes from `/rest/ecosystem/config` (`ecosystem.instanceId`). The header and entry meta show the id at `data-ecosystem-instance-id` / `data-ecosystem-instance`. The browser keeps a `requesterId` in `localStorage` (`ecosystem-requester-id`) for MQTT reply routing.
 
 The visible catalog list is sorted alphabetically by `skill.name` when no search query is active.
 
 ## MQTT protocol
 
-The backend hook connects to `MQTT_BROKER_URL` on `n8n.ready`, publishes a retained catalog, subscribes to workflow requests, and republishes on `workflow.afterCreate` / `afterUpdate` / `afterDelete`. The browser connects via MQTT.js to discover catalogs and request peer workflows.
+The backend hook connects to `ecosystem.mqttBrokerUrl` on `n8n.ready`, publishes a retained catalog, subscribes to workflow requests, and republishes on `workflow.afterCreate` / `afterUpdate` / `afterDelete`. The browser connects via MQTT.js to discover catalogs and request peer workflows.
 
 Peers must share one broker. Payloads are JSON UTF-8.
 
@@ -124,7 +145,7 @@ Peers must share one broker. Payloads are JSON UTF-8.
 | Workflow request | `ecosystem/request/{targetInstanceId}` | no | Browser requester → owner backend |
 | Workflow reply | `ecosystem/reply/{requesterId}` | no | Owner backend → browser requester |
 
-`instanceId` is `ECOSYSTEM_INSTANCE_ID`. `requesterId` is a UUID in the browser's `localStorage` (`ecosystem-requester-id`).
+`instanceId` is the default 8-character hash or an `ecosystem.instanceId` override. MQTT topics use that value as-is. `requesterId` is a UUID in the browser's `localStorage` (`ecosystem-requester-id`).
 
 ### Message types
 
@@ -132,12 +153,10 @@ Peers must share one broker. Payloads are JSON UTF-8.
 
 ```json
 {
-  "instanceId": "uuid",
-  "instanceName": "n8n-abc12345",
+  "instanceId": "8-char-hex",
   "entries": [
     {
-      "instanceId": "uuid",
-      "instanceName": "n8n-abc12345",
+      "instanceId": "8-char-hex",
       "workflowId": "n8n-workflow-id",
       "workflowName": "My Workflow",
       "skill": {
