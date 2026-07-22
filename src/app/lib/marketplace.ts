@@ -3,38 +3,41 @@ import type {
 	CatalogEntry,
 	CatalogMessage,
 	N8nWorkflow,
-	ShareableWorkflowSummary,
 	WorkflowReplyMessage,
 	WorkflowRequestMessage,
 } from '../../shared/index';
 import {
 	catalogSubscriptionPattern,
-	catalogTopic,
-	type WorkflowRequestMessage as RequestMsg,
 	replySubscriptionPattern,
 	replyTopic,
-	requestSubscriptionPattern,
 	requestTopic,
 } from '../../shared/types';
 
-const INSTANCE_KEY = 'ecosystem-instance-id';
-const INSTANCE_NAME_KEY = 'ecosystem-instance-name';
+const WORKFLOW_FETCH_TIMEOUT_MS = 15_000;
+const REQUESTER_KEY = 'ecosystem-requester-id';
 
-export function getInstanceId(): string {
-	const existing = localStorage.getItem(INSTANCE_KEY);
-	if (existing) return existing;
-	const id = crypto.randomUUID();
-	localStorage.setItem(INSTANCE_KEY, id);
-	return id;
+export type EcosystemConfig = {
+	mode: 'development' | 'production';
+	appUrl: string;
+	stylesheets: string[];
+	instanceId: string;
+	instanceName: string;
+};
+
+export async function fetchEcosystemConfig(): Promise<EcosystemConfig> {
+	const response = await fetch('/rest/ecosystem/config', { credentials: 'include' });
+	if (!response.ok) {
+		throw new Error(`Failed to load ecosystem config (${response.status})`);
+	}
+	return (await response.json()) as EcosystemConfig;
 }
 
-export function getInstanceName(): string {
-	const existing = localStorage.getItem(INSTANCE_NAME_KEY);
+export function getRequesterId(): string {
+	const existing = localStorage.getItem(REQUESTER_KEY);
 	if (existing) return existing;
-	const id = getInstanceId();
-	const name = `n8n-${id.slice(0, 8)}`;
-	localStorage.setItem(INSTANCE_NAME_KEY, name);
-	return name;
+	const id = crypto.randomUUID();
+	localStorage.setItem(REQUESTER_KEY, id);
+	return id;
 }
 
 export async function fetchMqttUrl(): Promise<string> {
@@ -44,15 +47,6 @@ export async function fetchMqttUrl(): Promise<string> {
 	}
 	const body = (await response.json()) as { url: string };
 	return body.url;
-}
-
-export async function fetchLocalShareables(): Promise<ShareableWorkflowSummary[]> {
-	const response = await fetch('/rest/ecosystem/workflows', { credentials: 'include' });
-	if (!response.ok) {
-		throw new Error(`Failed to load local workflows (${response.status})`);
-	}
-	const body = (await response.json()) as { workflows: ShareableWorkflowSummary[] };
-	return body.workflows;
 }
 
 export async function fetchShareableWorkflow(workflowId: string): Promise<N8nWorkflow> {
@@ -85,16 +79,9 @@ export async function registerWorkflow(workflow: N8nWorkflow): Promise<void> {
 	}
 }
 
-export type MqttHandlers = {
-	onCatalog: (message: CatalogMessage) => void;
-	onWorkflowRequest: (message: WorkflowRequestMessage) => Promise<void>;
-	onWorkflowReply?: (message: WorkflowReplyMessage) => void;
-};
-
 export async function connectMarketplace(
 	url: string,
-	instanceId: string,
-	handlers: MqttHandlers,
+	onCatalog: (message: CatalogMessage) => void,
 ): Promise<MqttClient> {
 	const client = mqtt.connect(url, {
 		keepalive: 30,
@@ -108,43 +95,13 @@ export async function connectMarketplace(
 	});
 
 	client.subscribe(catalogSubscriptionPattern());
-	client.subscribe(requestSubscriptionPattern(instanceId));
 
-	client.on('message', async (topic, payload) => {
-		const text = payload.toString();
-		let data: unknown;
-		try {
-			data = JSON.parse(text);
-		} catch {
-			return;
-		}
-
-		if (topic.endsWith('/catalog')) {
-			handlers.onCatalog(data as CatalogMessage);
-			return;
-		}
-
-		if (topic.startsWith('ecosystem/request/')) {
-			await handlers.onWorkflowRequest(data as RequestMsg);
-			return;
-		}
-
-		if (topic.startsWith('ecosystem/reply/')) {
-			handlers.onWorkflowReply?.(data as WorkflowReplyMessage);
-		}
+	client.on('message', (topic, payload) => {
+		if (!topic.endsWith('/catalog')) return;
+		onCatalog(JSON.parse(payload.toString()) as CatalogMessage);
 	});
 
 	return client;
-}
-
-export function publishCatalog(
-	client: MqttClient,
-	instanceId: string,
-	instanceName: string,
-	entries: CatalogEntry[],
-): void {
-	const message: CatalogMessage = { instanceId, instanceName, entries };
-	client.publish(catalogTopic(instanceId), JSON.stringify(message), { retain: true });
 }
 
 export function requestWorkflow(
@@ -160,28 +117,51 @@ export function requestWorkflow(
 	return reply;
 }
 
-export function publishWorkflowReply(
+export async function fetchPeerWorkflow(
 	client: MqttClient,
-	replyTopicName: string,
-	workflowId: string,
-	workflow: N8nWorkflow,
-): void {
-	const message: WorkflowReplyMessage = { workflowId, workflow };
-	client.publish(replyTopicName, JSON.stringify(message));
+	requesterId: string,
+	entry: CatalogEntry,
+): Promise<N8nWorkflow> {
+	const reply = requestWorkflow(client, entry.instanceId, requesterId, entry.workflowId);
+	return new Promise<N8nWorkflow>((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			client.off('message', handler);
+			reject(new Error('Workflow request timed out'));
+		}, WORKFLOW_FETCH_TIMEOUT_MS);
+
+		const handler = (topic: string, payload: Buffer) => {
+			if (topic !== reply) return;
+			clearTimeout(timeout);
+			client.off('message', handler);
+			const body = JSON.parse(payload.toString()) as WorkflowReplyMessage;
+			resolve(body.workflow);
+		};
+
+		client.on('message', handler);
+	});
 }
 
-export function buildCatalogEntries(
-	instanceId: string,
-	instanceName: string,
-	shareables: ShareableWorkflowSummary[],
-): CatalogEntry[] {
-	const publishedAt = new Date().toISOString();
-	return shareables.map((item) => ({
-		instanceId,
-		instanceName,
-		workflowId: item.workflowId,
-		workflowName: item.workflowName,
-		skill: item.skill,
-		publishedAt,
-	}));
+export async function fetchWorkflowForEntry(
+	client: MqttClient | null,
+	ownInstanceId: string,
+	requesterId: string,
+	entry: CatalogEntry,
+): Promise<N8nWorkflow> {
+	if (entry.instanceId === ownInstanceId) {
+		return fetchShareableWorkflow(entry.workflowId);
+	}
+	if (!client) {
+		throw new Error('MQTT client not ready');
+	}
+	return fetchPeerWorkflow(client, requesterId, entry);
+}
+
+export function downloadWorkflowJson(entry: CatalogEntry, workflow: N8nWorkflow): void {
+	const blob = new Blob([JSON.stringify(workflow, null, 2)], { type: 'application/json' });
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement('a');
+	anchor.href = url;
+	anchor.download = `${entry.skill.name}.json`;
+	anchor.click();
+	URL.revokeObjectURL(url);
 }

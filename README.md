@@ -22,7 +22,7 @@ The SKILL.md frontmatter may optionally include a `metadata` block with:
 - `version`
 - `tags`
 
-The Ecosystem UI allows discovering, filtering, fuzzy searching, downloading and registering other N8N instances' Workflows into the current instance. Majority of these operations happen in UI and with [MQTT.js](https://github.com/mqttjs/MQTT.js). The backend only aids in discovering Workflows that are hidden to the current N8N user and providing a route to return the configured MQTT brokers address for the UI.
+The Ecosystem UI allows discovering, filtering, and fuzzy searching workflows across instances. Each entry supports **Copy to Clipboard**, **Import into N8N**, and **Download Workflow** (JSON file). Use **Hide Own Workflows** to hide this instance's catalog and show peers only. The browser discovers catalogs over MQTT; the backend hook publishes this instance's catalog and answers workflow requests from peers.
 
 ## Setup
 
@@ -37,6 +37,8 @@ npm run build
 export EXTERNAL_HOOK_FILES=/absolute/path/to/dist/backend/hooks.cjs
 export EXTERNAL_FRONTEND_HOOKS_URLS=http://localhost:5678/rest/ecosystem/bridge.js
 export MQTT_BROKER_URL=ws://127.0.0.1:1883
+export ECOSYSTEM_INSTANCE_ID=your-instance-uuid
+export ECOSYSTEM_INSTANCE_NAME=my-n8n
 export N8N_SECURE_COOKIE=false
 n8n start
 ```
@@ -66,11 +68,11 @@ Optional body text shown in the note.
 
 Required frontmatter fields: `name`, `description`. The `name` must be lowercase alphanumeric with hyphens (max 64 characters).
 
-When the Ecosystem tab is open, shareable workflows from this instance are advertised to peers on the MQTT broker. Other instances see them in their Ecosystem list; users can download and register them into their own n8n.
+When shareable workflows exist in this instance, the backend hook advertises them on the MQTT broker. Other instances see them in their Ecosystem list without opening those instances in a browser; users can copy, import, or download them into their own n8n.
 
 ## Screenshots
 
-The e2e harness boots **three** n8n instances on one MQTT broker. Each instance publishes its own shareable workflows (SKILL sticky notes) and lists workflows from the other two. A private workflow without SKILL frontmatter is never shown.
+The e2e harness boots **three** n8n instances on one MQTT broker. Each backend publishes its shareable workflows (SKILL sticky notes); opening one Ecosystem tab discovers all peers. A private workflow without SKILL frontmatter is never shown.
 
 | Instance | Shares locally | Sees from peers |
 | --- | --- | --- |
@@ -78,19 +80,21 @@ The e2e harness boots **three** n8n instances on one MQTT broker. Each instance 
 | B | `csv-importer`, `webhook-relay` (bob) | alice's and carol's four skills |
 | C | `pdf-merger`, `health-ping` (carol) | alice's and bob's four skills |
 
-**Instance A** — peer list includes bob's and carol's workflows (not its own):
+Toggle **Hide Own Workflows** to switch between showing your local catalog alongside peers (default, unchecked) or peers only (checked).
 
-![Instance A Ecosystem tab](test/e2e/screenshots/ecosystem-a.png)
+**Local + peer skills** (Hide Own Workflows unchecked):
 
-**Instance B** — peer list includes alice's and carol's workflows:
+| Instance A | Instance B | Instance C |
+| --- | --- | --- |
+| ![Instance A with own workflows](test/e2e/screenshots/ecosystem-a-own.png) | ![Instance B with own workflows](test/e2e/screenshots/ecosystem-b-own.png) | ![Instance C with own workflows](test/e2e/screenshots/ecosystem-c-own.png) |
 
-![Instance B Ecosystem tab](test/e2e/screenshots/ecosystem-b.png)
+**Peers only** (Hide Own Workflows checked):
 
-**Instance C** — peer list includes alice's and bob's workflows:
+| Instance A | Instance B | Instance C |
+| --- | --- | --- |
+| ![Instance A peers only](test/e2e/screenshots/ecosystem-a-peers.png) | ![Instance B peers only](test/e2e/screenshots/ecosystem-b-peers.png) | ![Instance C peers only](test/e2e/screenshots/ecosystem-c-peers.png) |
 
-![Instance C Ecosystem tab](test/e2e/screenshots/ecosystem-c.png)
-
-Regenerate with `npm run test:e2e`.
+Regenerate with `npm run test:e2e`. For manual review without tests, run `npm run dev:e2e`.
 
 ## Development
 

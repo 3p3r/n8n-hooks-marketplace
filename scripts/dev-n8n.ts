@@ -18,6 +18,8 @@ const vitePort = Number(process.env.VITE_PORT ?? 5173);
 const baseUrl = `http://127.0.0.1:${n8nPort}`;
 const ecosystemAppUrl =
 	process.env.ECOSYSTEM_APP_URL ?? `http://localhost:${vitePort}/rest/ecosystem/app/`;
+const ecosystemInstanceId = 'dddddddd-dddd-4ddd-dddd-dddddddddddd';
+const ecosystemInstanceName = 'dev';
 
 let n8nProcess: ChildProcess | null = null;
 let closeMqtt: (() => Promise<void>) | null = null;
@@ -213,6 +215,8 @@ async function main(): Promise<void> {
 			EXTERNAL_FRONTEND_HOOKS_URLS: bridgeUrl,
 			MQTT_BROKER_URL: mqtt.url,
 			ECOSYSTEM_APP_URL: ecosystemAppUrl,
+			ECOSYSTEM_INSTANCE_ID: ecosystemInstanceId,
+			ECOSYSTEM_INSTANCE_NAME: ecosystemInstanceName,
 			N8N_DIAGNOSTICS_ENABLED: 'false',
 			N8N_VERSION_NOTIFICATIONS_ENABLED: 'false',
 			N8N_TEMPLATES_ENABLED: 'false',

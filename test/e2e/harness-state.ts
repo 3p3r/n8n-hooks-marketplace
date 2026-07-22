@@ -14,6 +14,7 @@ export type HarnessState = {
 		port: number;
 		baseUrl: string;
 		cookie: string;
+		instanceId: string;
 	}>;
 };
 

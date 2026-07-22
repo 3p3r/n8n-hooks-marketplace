@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { Request, Response } from 'express';
 import {
@@ -6,6 +7,7 @@ import {
 	extractShareablesFromWorkflows,
 	type N8nWorkflow,
 } from '../shared/index';
+import { startEcosystemMqtt } from './ecosystem-mqtt';
 
 type HookContext = {
 	dbCollections: {
@@ -28,10 +30,41 @@ type N8nServer = {
 };
 
 declare const __dirname: string;
+declare const __filename: string;
 
 const distRoot = path.join(__dirname, '..');
 const bridgePath = path.join(distRoot, 'bridge', 'index.js');
 const appRoot = path.join(distRoot, 'app');
+const requireFromHooks = createRequire(__filename);
+
+let republishCatalog: () => Promise<void>;
+
+function normalizeStylesheetHref(href: string): string {
+	return href.replace(/\/\{\{BASE_PATH\}\}/g, '');
+}
+
+function resolveN8nStylesheets(req: Request): string[] {
+	const packageJson = requireFromHooks.resolve('n8n-editor-ui/package.json');
+	const indexPath = path.join(path.dirname(packageJson), 'dist', 'index.html');
+	const html = fs.readFileSync(indexPath, 'utf8');
+	const stylesheets: string[] = [];
+	const origin = `${req.protocol}://${req.get('host')}`;
+
+	for (const match of html.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi)) {
+		const hrefMatch = match[0].match(/href=["']([^"']+)["']/i);
+		if (!hrefMatch) continue;
+		const stylesheet = `${origin}${normalizeStylesheetHref(hrefMatch[1])}`;
+		if (!stylesheets.includes(stylesheet)) {
+			stylesheets.push(stylesheet);
+		}
+	}
+
+	if (stylesheets.length === 0) {
+		throw new Error(`No stylesheets found in ${indexPath}`);
+	}
+
+	return stylesheets;
+}
 
 function sendJson(res: Response, status: number, body: unknown): void {
 	res.status(status).json(body);
@@ -71,8 +104,18 @@ function getEcosystemAppUrl(): string | undefined {
 	return process.env.ECOSYSTEM_APP_URL?.trim() || undefined;
 }
 
+function getInstanceIdentity(): { instanceId: string; instanceName: string } {
+	const instanceId = process.env.ECOSYSTEM_INSTANCE_ID?.trim();
+	const instanceName = process.env.ECOSYSTEM_INSTANCE_NAME?.trim();
+	if (!instanceId || !instanceName) {
+		throw new Error('ECOSYSTEM_INSTANCE_ID and ECOSYSTEM_INSTANCE_NAME are required');
+	}
+	return { instanceId, instanceName };
+}
+
 function registerRoutes(server: N8nServer, ctx: HookContext): void {
 	const base = `/${server.restEndpoint}/ecosystem`;
+	const { instanceId, instanceName } = getInstanceIdentity();
 
 	server.app.get(`${base}/mqtt`, async (_req, res) => {
 		try {
@@ -84,12 +127,21 @@ function registerRoutes(server: N8nServer, ctx: HookContext): void {
 		}
 	});
 
-	server.app.get(`${base}/config`, async (_req, res) => {
-		const devUrl = getEcosystemAppUrl();
-		sendJson(res, 200, {
-			mode: devUrl ? 'development' : 'production',
-			appUrl: devUrl ?? `${base}/app/`,
-		});
+	server.app.get(`${base}/config`, async (req, res) => {
+		try {
+			const devUrl = getEcosystemAppUrl();
+			sendJson(res, 200, {
+				mode: devUrl ? 'development' : 'production',
+				appUrl: devUrl ?? `${base}/app/`,
+				stylesheets: resolveN8nStylesheets(req),
+				instanceId,
+				instanceName,
+			});
+		} catch (error) {
+			sendJson(res, 500, {
+				message: error instanceof Error ? error.message : 'Failed to resolve ecosystem config',
+			});
+		}
 	});
 
 	server.app.get(`${base}/bridge.js`, async (_req, res) => {
@@ -152,7 +204,32 @@ const hooks = {
 	n8n: {
 		ready: [
 			async function (this: HookContext, server: N8nServer) {
+				const { instanceId, instanceName } = getInstanceIdentity();
 				registerRoutes(server, this);
+				const mqtt = await startEcosystemMqtt(
+					this.dbCollections.Workflow,
+					instanceId,
+					instanceName,
+					getMqttUrl(),
+				);
+				republishCatalog = mqtt.republishCatalog;
+			},
+		],
+	},
+	workflow: {
+		afterCreate: [
+			async () => {
+				await republishCatalog();
+			},
+		],
+		afterUpdate: [
+			async () => {
+				await republishCatalog();
+			},
+		],
+		afterDelete: [
+			async () => {
+				await republishCatalog();
 			},
 		],
 	},

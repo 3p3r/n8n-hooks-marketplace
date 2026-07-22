@@ -1,30 +1,45 @@
 import fs from 'node:fs';
-import { chromium, type Browser, type BrowserContext, type FrameLocator, type Page } from 'playwright';
+import { expect as pwExpect } from '@playwright/test';
+import {
+	type Browser,
+	type BrowserContext,
+	chromium,
+	type FrameLocator,
+	type Page,
+} from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	csvImporter,
+	ecosystemInstanceId,
 	localSkillNames,
 	pdfMerger,
 	peerSkillsFor,
+	visibleSkillsWithOwn,
 } from '../fixtures/workflows';
 import { E2E_UI_TIMEOUT_MS } from './constants';
+import { createBrowserContext, listWorkflows, screenshotPath } from './harness';
 import { readHarnessState } from './harness-state';
 import {
 	clearFilters,
-	clickDownload,
-	clickRegister,
+	clickCopy,
+	clickFileDownload,
+	clickImport,
+	expectInstanceId,
 	expectSkillAbsent,
 	expectSkillNames,
+	expectSkillOrder,
 	openEcosystem,
+	readClipboardText,
 	setFilter,
+	setHideOwn,
 	waitForSkills,
 } from './helpers';
-import { createBrowserContext, listWorkflows, screenshotPath } from './harness';
 
 type InstancePages = {
 	name: string;
 	baseUrl: string;
 	cookie: string;
+	instanceId: string;
 	context: BrowserContext;
 	page: Page;
 	frame: FrameLocator;
@@ -32,6 +47,31 @@ type InstancePages = {
 
 let browser: Browser;
 let instancePages: InstancePages[];
+
+async function openInstance(name: string): Promise<InstancePages> {
+	const state = readHarnessState();
+	const instance = state.instances.find((entry) => entry.name === name);
+	if (!instance) {
+		throw new Error(`Missing harness instance ${name}`);
+	}
+
+	const context = await createBrowserContext(browser, instance);
+	await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+		origin: instance.baseUrl,
+	});
+	const page = await context.newPage();
+	page.setDefaultTimeout(E2E_UI_TIMEOUT_MS);
+	const frame = await openEcosystem(page);
+	return {
+		name: instance.name,
+		baseUrl: instance.baseUrl,
+		cookie: instance.cookie,
+		instanceId: instance.instanceId,
+		context,
+		page,
+		frame,
+	};
+}
 
 function getInstance(name: string): InstancePages {
 	const entry = instancePages.find((item) => item.name === name);
@@ -41,25 +81,18 @@ function getInstance(name: string): InstancePages {
 	return entry;
 }
 
-beforeAll(async () => {
-	const state = readHarnessState();
-	browser = await chromium.launch({ headless: true });
-	instancePages = [];
-
-	for (const instance of state.instances) {
-		const context = await createBrowserContext(browser, instance);
-		const page = await context.newPage();
-		page.setDefaultTimeout(E2E_UI_TIMEOUT_MS);
-		const frame = await openEcosystem(page);
-		instancePages.push({
-			name: instance.name,
-			baseUrl: instance.baseUrl,
-			cookie: instance.cookie,
-			context,
-			page,
-			frame,
-		});
+async function captureScreenshots(suffix: 'own' | 'peers'): Promise<void> {
+	for (const instance of instancePages) {
+		const file = `ecosystem-${instance.name.replace('instance-', '')}-${suffix}.png`;
+		const target = screenshotPath(file);
+		await instance.page.screenshot({ path: target, fullPage: true });
+		expect(fs.statSync(target).size).toBeGreaterThan(10_000);
 	}
+}
+
+beforeAll(async () => {
+	browser = await chromium.launch({ headless: true });
+	instancePages = [await openInstance('instance-a')];
 }, 60_000);
 
 afterAll(async () => {
@@ -69,43 +102,42 @@ afterAll(async () => {
 }, 10_000);
 
 describe('ecosystem marketplace e2e', () => {
-	it('discovers, searches, downloads, and registers workflows across three instances', async () => {
+	it('discovers, filters, copies, imports, and downloads workflows across three instances', async () => {
 		const frameA = getInstance('instance-a').frame;
+
+		await expectInstanceId(frameA, ecosystemInstanceId('instance-a'));
+		await waitForSkills(frameA, visibleSkillsWithOwn('instance-a'));
+		await expectSkillOrder(frameA, visibleSkillsWithOwn('instance-a'));
+
+		instancePages.push(await openInstance('instance-b'));
+		instancePages.push(await openInstance('instance-c'));
+
 		const frameB = getInstance('instance-b').frame;
 		const frameC = getInstance('instance-c').frame;
 
-		await waitForSkills(frameA, peerSkillsFor('instance-a'));
+		await expectInstanceId(frameB, ecosystemInstanceId('instance-b'));
+		await expectInstanceId(frameC, ecosystemInstanceId('instance-c'));
+
+		await waitForSkills(frameB, visibleSkillsWithOwn('instance-b'));
+		await waitForSkills(frameC, visibleSkillsWithOwn('instance-c'));
+
+		await captureScreenshots('own');
+
+		await setHideOwn(frameA, true);
+		await setHideOwn(frameB, true);
+		await setHideOwn(frameC, true);
+
+		await expectSkillNames(frameA, peerSkillsFor('instance-a'));
+		await expectSkillNames(frameB, peerSkillsFor('instance-b'));
+		await expectSkillNames(frameC, peerSkillsFor('instance-c'));
 
 		for (const skillName of localSkillNames('instance-a')) {
 			await expectSkillAbsent(frameA, skillName);
 		}
-		for (const skillName of localSkillNames('instance-b')) {
-			await expectSkillAbsent(frameB, skillName);
-		}
-		for (const skillName of localSkillNames('instance-c')) {
-			await expectSkillAbsent(frameC, skillName);
-		}
 
 		await expectSkillAbsent(frameA, 'Private Workflow');
 
-		await getInstance('instance-a').page.screenshot({
-			path: screenshotPath('ecosystem-a.png'),
-			fullPage: true,
-		});
-		await getInstance('instance-b').page.screenshot({
-			path: screenshotPath('ecosystem-b.png'),
-			fullPage: true,
-		});
-		await getInstance('instance-c').page.screenshot({
-			path: screenshotPath('ecosystem-c.png'),
-			fullPage: true,
-		});
-
-		for (const file of ['ecosystem-a.png', 'ecosystem-b.png', 'ecosystem-c.png']) {
-			const target = screenshotPath(file);
-			expect(fs.existsSync(target)).toBe(true);
-			expect(fs.statSync(target).size).toBeGreaterThan(10_000);
-		}
+		await captureScreenshots('peers');
 
 		await setFilter(frameA, '[data-ecosystem-search]', 'csv-importer');
 		await expectSkillNames(frameA, ['csv-importer']);
@@ -119,7 +151,9 @@ describe('ecosystem marketplace e2e', () => {
 		await setFilter(frameB, '[data-ecosystem-author-filter]', 'alice');
 		await expectSkillNames(frameB, ['invoice-parser', 'slack-notifier']);
 		await setFilter(frameB, '[data-ecosystem-author-filter]', 'nobody');
-		await frameB.locator('[data-ecosystem-empty]').waitFor({ state: 'visible', timeout: E2E_UI_TIMEOUT_MS });
+		await frameB
+			.locator('[data-ecosystem-empty]')
+			.waitFor({ state: 'visible', timeout: E2E_UI_TIMEOUT_MS });
 		await clearFilters(frameB);
 
 		await setFilter(frameB, '[data-ecosystem-tag-filter]', 'finance');
@@ -132,21 +166,45 @@ describe('ecosystem marketplace e2e', () => {
 		await expectSkillNames(frameA, ['csv-importer']);
 		await clearFilters(frameA);
 
-		await clickDownload(frameA, 'csv-importer');
+		await clickCopy(frameA, 'csv-importer');
+		const clipboardText = await readClipboardText(frameA);
+		const clipboardWorkflow = JSON.parse(clipboardText) as { name?: string; nodes?: unknown[] };
+		expect(Array.isArray(clipboardWorkflow.nodes)).toBe(true);
+		expect(clipboardWorkflow.name).toContain('CSV Importer');
 
 		const instanceA = getInstance('instance-a');
 		const importedPdf = `${pdfMerger.name} (imported)`;
 		const beforePdf = await listWorkflows(instanceA.baseUrl, instanceA.cookie);
 		expect(beforePdf.some((workflow) => workflow.name === importedPdf)).toBe(false);
-		await clickRegister(frameA, 'pdf-merger');
+		await clickImport(frameA, 'pdf-merger');
 		const afterPdf = await listWorkflows(instanceA.baseUrl, instanceA.cookie);
 		expect(afterPdf.some((workflow) => workflow.name === importedPdf)).toBe(true);
+
+		const downloadPromise = instanceA.page.waitForEvent('download', { timeout: E2E_UI_TIMEOUT_MS });
+		await clickFileDownload(frameA, 'health-ping');
+		const download = await downloadPromise;
+		expect(download.suggestedFilename()).toMatch(/health-ping\.json$/);
+		const downloadPath = await download.path();
+		expect(downloadPath).toBeTruthy();
+		const body = fs.readFileSync(downloadPath as string, 'utf8');
+		const downloadedWorkflow = JSON.parse(body) as { nodes?: unknown[] };
+		expect(Array.isArray(downloadedWorkflow.nodes)).toBe(true);
+		expect(body.length).toBeGreaterThan(0);
 
 		const importedCsv = `${csvImporter.name} (imported)`;
 		const beforeCsv = await listWorkflows(instanceA.baseUrl, instanceA.cookie);
 		const existingCsv = beforeCsv.filter((workflow) => workflow.name === importedCsv).length;
-		await clickRegister(frameA, 'csv-importer');
+		await clickImport(frameA, 'csv-importer');
 		const afterCsv = await listWorkflows(instanceA.baseUrl, instanceA.cookie);
-		expect(afterCsv.filter((workflow) => workflow.name === importedCsv).length).toBe(existingCsv + 1);
-	}, 60_000);
+		expect(afterCsv.filter((workflow) => workflow.name === importedCsv).length).toBe(
+			existingCsv + 1,
+		);
+
+		await setHideOwn(frameA, false);
+		await waitForSkills(frameA, localSkillNames('instance-a'));
+		const ownEntry = frameA.locator('[data-skill-name="invoice-parser"]');
+		const importButton = ownEntry.locator('[data-ecosystem-import]');
+		await pwExpect(importButton).toBeDisabled();
+		await pwExpect(importButton).toHaveText('Already on this instance');
+	}, 90_000);
 });

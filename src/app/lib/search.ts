@@ -20,7 +20,9 @@ export function useFuzzyCatalog(entries: CatalogEntry[], query: string): Catalog
 	);
 
 	return useMemo(() => {
-		if (!query.trim()) return entries;
+		if (!query.trim()) {
+			return [...entries].sort((left, right) => left.skill.name.localeCompare(right.skill.name));
+		}
 		return fuse.search(query).map((result) => result.item);
 	}, [entries, fuse, query]);
 }

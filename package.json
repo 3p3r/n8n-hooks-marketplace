@@ -16,7 +16,8 @@
 		"format": "biome check --write .",
 		"test": "vitest run",
 		"test:e2e:cleanup": "tsx test/e2e/cleanup-cli.ts",
-		"test:e2e": "npm run test:e2e:cleanup && npm run build && tsx test/e2e/run-e2e.ts"
+		"test:e2e": "npm run test:e2e:cleanup && npm run build && tsx test/e2e/run-e2e.ts",
+		"dev:e2e": "npm run test:e2e:cleanup && npm run build && tsx test/e2e/dev-e2e.ts"
 	},
 	"repository": {
 		"type": "git",

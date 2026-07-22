@@ -7,7 +7,8 @@ Developer notes for the n8n-hooks-marketplace codebase.
 ```
 src/
   shared/          # SKILL parser, catalog extraction, MQTT topic helpers/types
-  backend/hooks.ts # n8n external hook (REST + static assets)
+  backend/hooks.ts # n8n external hook (REST + MQTT catalog/replies)
+  backend/ecosystem-mqtt.ts # Backend MQTT client for catalog publish and workflow replies
   bridge/index.ts  # Injects Ecosystem tab + iframe into n8n editor
   app/             # React Ecosystem UI (Vite)
 dist/              # Build output (backend CJS, bridge IIFE, Vite app)
@@ -58,7 +59,9 @@ To use an external broker instead of the embedded one, set `MQTT_BROKER_URL` bef
 | --- | --- |
 | `EXTERNAL_HOOK_FILES` | Absolute path to `dist/backend/hooks.cjs` |
 | `EXTERNAL_FRONTEND_HOOKS_URLS` | URL(s) to `bridge.js` on this n8n instance (`;`-separated) |
-| `MQTT_BROKER_URL` | WebSocket MQTT broker URL for the Ecosystem UI (`ws://` / `wss://`) |
+| `MQTT_BROKER_URL` | WebSocket MQTT broker URL (`ws://` / `wss://`) |
+| `ECOSYSTEM_INSTANCE_ID` | Stable UUID for this n8n instance (catalog + request routing) |
+| `ECOSYSTEM_INSTANCE_NAME` | Human-readable instance name shown in the Ecosystem UI |
 | `ECOSYSTEM_APP_URL` | Optional Vite dev server URL for the iframe (omit in production) |
 | `N8N_SECURE_COOKIE` | Set `false` for local HTTP testing |
 | `N8N_PORT` | n8n listen port (default `5678`; used by Vite proxy in dev) |
@@ -70,13 +73,15 @@ Registered on `n8n.ready` under `/{restEndpoint}/ecosystem/`:
 | Route | Purpose |
 | --- | --- |
 | `GET /mqtt` | Returns `{ url }` from `MQTT_BROKER_URL` |
-| `GET /config` | Returns `{ mode, appUrl }` for bridge iframe |
+| `GET /config` | Returns `{ mode, appUrl, stylesheets, instanceId, instanceName }` for bridge iframe and app styling |
 | `GET /bridge.js` | Serves bridge bundle |
 | `GET /workflows` | Lists local shareable workflows (SKILL sticky note) |
 | `GET /workflows/:id` | Full workflow JSON for a shareable workflow |
 | `GET /app/*` | Serves built React app (or Vite URL in dev via `ECOSYSTEM_APP_URL`) |
 
 Shareable detection: scan workflow `nodes` for `type === 'n8n-nodes-base.stickyNote'`, parse `parameters.content` as SKILL.md frontmatter. Require `name` + `description`; optional `metadata.author`, `metadata.version`, `metadata.tags`.
+
+`GET /config` includes `stylesheets`: root-relative URLs parsed from `n8n-editor-ui/dist/index.html` (`link[rel="stylesheet"]`, `{{BASE_PATH}}` stripped). Missing package or HTML is a 500 — no fallbacks.
 
 ## Bridge
 
@@ -89,16 +94,24 @@ Shareable detection: scan workflow `nodes` for `type === 'n8n-nodes-base.stickyN
 
 ## React app
 
-`src/app/` connects to MQTT on mount, publishes the local catalog, subscribes to peer catalogs, and provides search/filter/download/register UI.
+`src/app/` connects to MQTT on mount, subscribes to peer catalogs, and provides search/filter UI with per-entry actions. The backend hook publishes this instance's catalog and answers workflow requests.
 
-- **Download**: MQTT request/reply to fetch full workflow JSON from peer
-- **Register**: `POST /rest/workflows` on the local n8n instance with the downloaded JSON
+On boot, fetches `/rest/ecosystem/config` and injects each `stylesheets` URL as `<link rel="stylesheet">` in the iframe head. Layout and control styles live in `src/app/styles.css` (`.ecosystem__input`, `.ecosystem__button`) using n8n design tokens from those stylesheets.
 
-Instance identity is stored in `localStorage` (`ecosystem-instance-id`, `ecosystem-instance-name`).
+- **Hide Own Workflows** (default off): when checked, hides local catalog entries and shows peers only
+- **Copy to Clipboard**: fetch workflow JSON (local REST or MQTT request/reply), then `navigator.clipboard.writeText`
+- **Import into N8N**: fetch if needed, then `POST /rest/workflows` (disabled for own-instance entries)
+- **Download Workflow**: fetch if needed, then trigger a `.json` file download via Blob + `<a download>`
+
+Workflow fetch uses a 15s timeout. Own workflows resolve via `GET /rest/ecosystem/workflows/:id`; peers use MQTT request/reply to the owning backend. Per-action errors render at `data-ecosystem-action-error`.
+
+Instance identity comes from `/rest/ecosystem/config` (`ECOSYSTEM_INSTANCE_ID` / `ECOSYSTEM_INSTANCE_NAME`). The header shows the instance ID at `data-ecosystem-instance-id`. The browser keeps a `requesterId` in `localStorage` (`ecosystem-requester-id`) for MQTT reply routing.
+
+The visible catalog list is sorted alphabetically by `skill.name` when no search query is active.
 
 ## MQTT protocol
 
-All marketplace traffic runs in the **browser** via MQTT.js. The backend only exposes the broker URL; it does not publish or subscribe.
+The backend hook connects to `MQTT_BROKER_URL` on `n8n.ready`, publishes a retained catalog, subscribes to workflow requests, and republishes on `workflow.afterCreate` / `afterUpdate` / `afterDelete`. The browser connects via MQTT.js to discover catalogs and request peer workflows.
 
 Peers must share one broker. Payloads are JSON UTF-8.
 
@@ -106,12 +119,12 @@ Peers must share one broker. Payloads are JSON UTF-8.
 
 | Topic | Pattern | Retain | Direction |
 | --- | --- | --- | --- |
-| Catalog | `ecosystem/{instanceId}/catalog` | yes | Each instance publishes its own catalog |
-| Catalog subscribe | `ecosystem/+/catalog` | — | Every instance subscribes |
-| Workflow request | `ecosystem/request/{targetInstanceId}` | no | Requester → owner |
-| Workflow reply | `ecosystem/reply/{requesterId}` | no | Owner → requester |
+| Catalog | `ecosystem/{instanceId}/catalog` | yes | Backend publishes its own catalog |
+| Catalog subscribe | `ecosystem/+/catalog` | — | Browser subscribes |
+| Workflow request | `ecosystem/request/{targetInstanceId}` | no | Browser requester → owner backend |
+| Workflow reply | `ecosystem/reply/{requesterId}` | no | Owner backend → browser requester |
 
-`instanceId` and `requesterId` are UUIDs from the browser's `localStorage` (`ecosystem-instance-id`).
+`instanceId` is `ECOSYSTEM_INSTANCE_ID`. `requesterId` is a UUID in the browser's `localStorage` (`ecosystem-requester-id`).
 
 ### Message types
 
@@ -161,43 +174,35 @@ Peers must share one broker. Payloads are JSON UTF-8.
 
 ```mermaid
 sequenceDiagram
-  participant UI as Ecosystem_UI
-  participant REST as n8n_REST
+  participant BackendA as n8n_A_hook
   participant Broker as MQTT_broker
-  participant PeerUI as Peer_Ecosystem_UI
-  participant PeerREST as Peer_n8n_REST
+  participant BackendB as n8n_B_hook
+  participant UIA as Ecosystem_UI_A
+  participant REST as n8n_REST_A
 
-  Note over UI,REST: On Ecosystem tab open (App mount)
-  UI->>REST: GET /rest/ecosystem/mqtt
-  UI->>REST: GET /rest/ecosystem/workflows
-  UI->>Broker: connect + subscribe ecosystem/+/catalog
-  UI->>Broker: subscribe ecosystem/request/{myInstanceId}
-  UI->>Broker: publish ecosystem/{myInstanceId}/catalog (retained)
+  Note over BackendA,BackendB: On n8n.ready + after workflow CRUD
+  BackendA->>Broker: retained catalog A
+  BackendB->>Broker: retained catalog B
+  UIA->>Broker: subscribe ecosystem/+/catalog
+  Broker-->>UIA: catalogs A and B
+  UIA->>Broker: request workflow from B
+  Broker-->>BackendB: WorkflowRequestMessage
+  BackendB->>Broker: WorkflowReplyMessage
+  Broker-->>UIA: workflow JSON
 
-  Note over PeerUI,Broker: Peer already connected
-  Broker-->>UI: retained catalog from peer
-  Broker-->>PeerUI: retained catalog from UI
-
-  Note over UI,PeerREST: User clicks Download
-  UI->>Broker: publish ecosystem/request/{peerInstanceId}
-  Broker-->>PeerUI: WorkflowRequestMessage
-  PeerUI->>PeerREST: GET /rest/ecosystem/workflows/{id}
-  PeerUI->>Broker: publish ecosystem/reply/{requesterId}
-  Broker-->>UI: WorkflowReplyMessage
-
-  Note over UI,REST: User clicks Register
-  UI->>REST: POST /rest/workflows (imported JSON)
+  Note over UIA,REST: User imports
+  UIA->>REST: POST /rest/workflows (imported JSON)
 ```
 
-| Event | Subscribe | Publish |
-| --- | --- | --- |
-| App mount / MQTT connect | `ecosystem/+/catalog`, `ecosystem/request/{myInstanceId}` | `ecosystem/{myInstanceId}/catalog` (retained) |
-| Incoming catalog (peer) | — | — (UI updates peer list; ignores own `instanceId`) |
-| Incoming workflow request (owner) | — | `ecosystem/reply/{requesterId}` after `GET /rest/ecosystem/workflows/:id` |
-| User download (requester) | `ecosystem/reply/{myInstanceId}` (per request) | `ecosystem/request/{targetInstanceId}` |
-| User register | — | — (local REST only) |
+| Event | Backend subscribe | Backend publish | Browser subscribe | Browser publish |
+| --- | --- | --- | --- | --- |
+| `n8n.ready` / workflow CRUD | `ecosystem/request/{instanceId}` | `ecosystem/{instanceId}/catalog` (retained) | — | — |
+| App mount | — | — | `ecosystem/+/catalog` | — |
+| Incoming workflow request | — | `ecosystem/reply/{requesterId}` | — | — |
+| User copy / import / download | — | — | `ecosystem/reply/{requesterId}` (per request) | `ecosystem/request/{targetInstanceId}` |
+| User import | — | — | — | — (local REST only) |
 
-Catalog entries are built from `GET /rest/ecosystem/workflows` on the owning instance. Full workflow JSON is never put on MQTT except in the reply to a explicit download request.
+Catalog entries are built from the owning instance's workflow DB. Full workflow JSON is never put on MQTT except in the reply to an explicit download request.
 
 ## Tests
 
@@ -205,15 +210,19 @@ Catalog entries are built from `GET /rest/ecosystem/workflows` on the owning ins
 npm test          # unit tests (vitest)
 npm run test:e2e  # real e2e: Vitest + Playwright, aedes + triple n8n
 npm run test:e2e:cleanup  # kill orphaned n8n from interrupted e2e runs
+npm run dev:e2e   # harness only: triple n8n + MQTT for manual UI review (Ctrl+C to stop)
 ```
 
-E2e is driven by Vitest (`test/e2e/marketplace.test.ts`) with Playwright in the browser. `test/e2e/run-e2e.ts` boots one MQTT broker and three n8n instances, runs Vitest in-process (same Node process as the harness), then tears everything down. Individual UI waits cap at 15s (`test/e2e/constants.ts`); harness boot caps at 60s; the full Vitest run caps at 75s.
+E2e is driven by Vitest (`test/e2e/marketplace.test.ts`) with Playwright in the browser. `test/e2e/run-e2e.ts` boots one MQTT broker and three n8n instances, runs Vitest in-process (same Node process as the harness), then tears everything down. Individual UI waits cap at 15s (`test/e2e/constants.ts`); harness boot caps at 60s; the full Vitest run caps at 100s.
 
-Tests cover discovery, fuzzy search, author/tag filters, download, and register in one consolidated case.
+Tests cover instance ID, hide-own toggle, backend-published peer discovery from a single tab, alphabetical catalog order, fuzzy search, author/tag filters, copy, import, file download, and own-import disabled in one consolidated case.
 
-- `test/e2e/screenshots/ecosystem-a.png`
-- `test/e2e/screenshots/ecosystem-b.png`
-- `test/e2e/screenshots/ecosystem-c.png`
+- `test/e2e/screenshots/ecosystem-a-own.png`
+- `test/e2e/screenshots/ecosystem-b-own.png`
+- `test/e2e/screenshots/ecosystem-c-own.png`
+- `test/e2e/screenshots/ecosystem-a-peers.png`
+- `test/e2e/screenshots/ecosystem-b-peers.png`
+- `test/e2e/screenshots/ecosystem-c-peers.png`
 
 ## Lint / format
 

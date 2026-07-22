@@ -2,35 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startVitest } from 'vitest/node';
-import { seedPlan } from '../fixtures/workflows';
-import { E2E_HARNESS_TIMEOUT_MS } from './constants';
+import { ecosystemInstanceId, seedPlan } from '../fixtures/workflows';
 import { cleanupOrphanE2eProcesses } from './cleanup';
-import {
-	clearHarnessArtifacts,
-	harnessStatePath,
-	type HarnessState,
-} from './harness-state';
+import { E2E_HARNESS_TIMEOUT_MS } from './constants';
 import { startHarness } from './harness';
+import { clearHarnessArtifacts, type HarnessState, harnessStatePath } from './harness-state';
+import { withTimeout } from './timeout';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const vitestConfig = path.join(repoRoot, 'vitest.e2e.config.ts');
-const VITEST_RUN_MS = 75_000;
-
-function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T> {
-	return new Promise<T>((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs}ms`)), timeoutMs);
-		promise.then(
-			(value) => {
-				clearTimeout(timer);
-				resolve(value);
-			},
-			(error) => {
-				clearTimeout(timer);
-				reject(error);
-			},
-		);
-	});
-}
+const VITEST_RUN_MS = 100_000;
 
 await cleanupOrphanE2eProcesses();
 clearHarnessArtifacts();
@@ -43,6 +24,7 @@ const state: HarnessState = {
 		port: instance.port,
 		baseUrl: instance.baseUrl,
 		cookie: instance.cookie,
+		instanceId: ecosystemInstanceId(instance.name),
 	})),
 };
 

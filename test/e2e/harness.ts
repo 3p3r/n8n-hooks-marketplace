@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import aedes from 'aedes';
 import ws from 'websocket-stream';
 import type { N8nWorkflow } from '../../src/shared/index';
+import { ecosystemInstanceId } from '../fixtures/workflows';
 import {
 	cleanupOrphanE2eProcesses,
 	killProcessTree,
@@ -132,15 +133,24 @@ async function waitForHealth(baseUrl: string, timeoutMs = E2E_HARNESS_TIMEOUT_MS
 }
 
 function extractCookie(response: Response): string {
-	const header = response.headers.get('set-cookie');
-	if (!header) throw new Error('Missing session cookie from n8n');
+	const setCookies =
+		'set-cookie' in response.headers && typeof response.headers.getSetCookie === 'function'
+			? response.headers.getSetCookie()
+			: [];
+	const header = setCookies[0] ?? response.headers.get('set-cookie');
+	if (!header) {
+		throw new Error('Missing session cookie from n8n');
+	}
 	return header.split(';')[0] ?? header;
 }
 
-async function loginOwner(baseUrl: string, payload: {
-	email: string;
-	password: string;
-}): Promise<string> {
+async function loginOwner(
+	baseUrl: string,
+	payload: {
+		email: string;
+		password: string;
+	},
+): Promise<string> {
 	const response = await fetch(`${baseUrl}/rest/login`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -172,7 +182,11 @@ async function setupOwner(baseUrl: string, label: string): Promise<string> {
 		});
 		if (response.ok) {
 			const header = response.headers.get('set-cookie');
-			if (header) return extractCookie(response);
+			const cookies =
+				typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
+			if (header || cookies.length > 0) {
+				return extractCookie(response);
+			}
 			return loginOwner(baseUrl, payload);
 		}
 		if (response.status === 400 || response.status === 409) {
@@ -296,6 +310,8 @@ async function spawnN8n(
 			EXTERNAL_HOOK_FILES: hooksPath,
 			EXTERNAL_FRONTEND_HOOKS_URLS: bridgeUrl,
 			MQTT_BROKER_URL: mqttUrl,
+			ECOSYSTEM_INSTANCE_ID: ecosystemInstanceId(name),
+			ECOSYSTEM_INSTANCE_NAME: name,
 			N8N_DIAGNOSTICS_ENABLED: 'false',
 			N8N_VERSION_NOTIFICATIONS_ENABLED: 'false',
 			N8N_TEMPLATES_ENABLED: 'false',
@@ -351,10 +367,7 @@ export type WorkflowSummary = {
 	name: string;
 };
 
-export async function listWorkflows(
-	baseUrl: string,
-	cookie: string,
-): Promise<WorkflowSummary[]> {
+export async function listWorkflows(baseUrl: string, cookie: string): Promise<WorkflowSummary[]> {
 	const response = await fetch(`${baseUrl}/rest/workflows`, {
 		headers: { Cookie: cookie },
 	});
@@ -391,9 +404,7 @@ export async function startHarness(seeds: InstanceSeed[]): Promise<Harness> {
 		const brokerPort = await getFreePort();
 		const instance = await spawnN8n(seed.name, port, brokerPort, mqtt.url);
 		await Promise.all(
-			seed.workflows.map((workflow) =>
-				createWorkflow(instance.baseUrl, instance.cookie, workflow),
-			),
+			seed.workflows.map((workflow) => createWorkflow(instance.baseUrl, instance.cookie, workflow)),
 		);
 		instances.push(instance);
 	}
